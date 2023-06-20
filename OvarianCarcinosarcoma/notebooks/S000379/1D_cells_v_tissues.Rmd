@@ -1,0 +1,262 @@
+---
+title: "Cells versus tissues"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/cells_tissue/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(patchwork)
+  library(SingleCellExperiment)
+  })
+
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication(base_size = 18))
+```
+
+# Aim
+
+The poor quality of the fixed nuclei from the Ovarian carcinosaroma PDX experiment prompted an attempt to fix intact fresh cells instead.
+
+2x PDX tumours split into pieces:
+
+Take 25mg from each tumour, mince into pieces and fix for "fix and chop" protocol
+To be dissociated with Scott lab enzymes after 4C storage
+Take the remainder and dissociate fresh tissue with Sccott lab enzymes 
+Collagenase, dispase, DNase
+Perform RBC lysis
+Fix 2 million cells
+The tumours fixed were:
+
+* PDX1264
+* PDX1233
+
+The time between fixing the tissue and fixing the dissociated cells was approximately 2 hours.
+The sample didn't dissociate fully after 20 min at 37C.
+He put the sample for 20 more min at 37C. c.f the fresh tissue takes ~45min.
+After 40min the fixed tissue still not dissociating. Anthony filtered with 100uM filter
+I resuspended in quenching buffer and added 10% v/v enhancer for 4C storage
+
+## Sample omission
+
+The sample hybridisated with probeset BC2 was low in cell number and very clumpy. Because the last time I ran PDX tumour fixed nuclei the 10x Genomics channel blocked - I omitted this sample.
+
+Therefore only PDX1233 has a matched fix/chop vs fixed dissociated cells
+
+## Capture issue
+
+Daniel Brown
+-
+Gery Ma of 10x Genomics came onsite to supervise the capture. I counted the pooled cell suspension to ~4,000 cells/uL in 500uL
+
+Targeted 28,000 cells to recover because the countess underestimated the count. After capture was short of GEM volume by ~5uL. There was excess gel bead volume ~40uL
+
+Gerry recommended to capture again with a reimbursed reaction. However had the same issue. Incubated both captures.
+
+More likely in my opinion to be the slight clumping which Gerry said was OK.
+
+## Low library concentrration
+
+* Capture 1 = 1.21ng/uL
+  + 6.84nM
+* Capture 2 = 1.5ng/uL
+  + 8.48nM
+
+# Load Data
+
+Generated in the **1A_buildSCE** notebook.  Keep PDX1233 as this contains both the cell and tissue sample.
+
+```{r loadData}
+sce <- readRDS("/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/PDX/S000379_basic.sce.rds")
+sce$Donor <- str_split(sce$Sample, pattern = "-", simplify = TRUE)[,1]
+sce$Input <- str_split(sce$Sample, pattern = "-", simplify = TRUE)[,2]
+
+sce <- sce[,sce$Donor == "PDX1233"]
+
+tb <- as_tibble(colData(sce))
+
+# recode factor levels
+tb$Input <- tb$Input %>% 
+  fct_recode("Cells" = "cells", "Tissue" = "tissue")
+```
+
+The number of cells in each capture
+
+```{r}
+tb %>% 
+  dplyr::count(Input)
+```
+
+# Quality control metrics by capture {.tabset}
+
+## Library size
+
+```{r libSize_p, fig.cap="Library size in deduplicated UMIs"}
+plt1 <- ggplot(tb, 
+             aes(x = Input, y= sum+1, fill = Capture)) + 
+  geom_violin(show.legend = TRUE) + 
+  ylab("Library Size (UMIs)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Dark2") 
+
+plt1
+```
+
+## Detected genes
+
+```{r detected_genes_p, fig.cap="Number of detected genes"}
+plt2 <- ggplot(tb, 
+             aes(x = Input, y= detected, fill = Capture)) + 
+  geom_violin(show.legend = TRUE) + 
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "l") +
+  ylab("Detected genes") + 
+  xlab("") +
+  scale_fill_brewer(palette = "Dark2")
+
+plt2
+```
+
+## Mitochondiral percentage
+
+```{r mito_per_p, fig.cap="Mitochondrial percentage of total counts"}
+plt3 <- ggplot(tb, 
+             aes(x = Input, y= subsets_Mito_percent, fill = Capture)) + 
+  geom_boxplot(show.legend = TRUE, outlier.size = 0.2, outlier.alpha = 0.25) + 
+  ylab("Mitochondrial \npercentage") + 
+  xlab("") +
+  scale_y_continuous(breaks=seq(0,100,10)) +
+  scale_fill_brewer(palette = "Dark2")
+
+plt3
+```
+
+## Genes v UMIs
+
+```{r gene_umi, fig.cap="UMIs versus genes"}
+plt4 <- ggplot(tb, 
+             aes(x = detected+1, y= sum+1, colour = Input)) + 
+  geom_point(show.legend = TRUE, alpha=0.2) + 
+  ylab("Library size (UMIs)") + 
+  xlab("Genes detected") +
+  scale_y_continuous(trans='log10') + scale_x_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "bl") +
+  scale_colour_brewer(palette = "Dark2")
+
+plt4
+```
+
+## Summary
+
+```{r summary, fig.height=12, fig.width=16, fig.cap="Summary"}
+plt1 + plt2 + plt3 + plt4 + 
+  plot_layout(guides = 'collect')
+```
+
+# Look at the gene expression correlaation between cells and tissue
+
+## Mung the count matrices
+
+```{r rowSums}
+sce_t <- sce[,sce$Input == "tissue"]
+rowData(sce_t)$sum <- rowSums2(counts(sce_t))
+rowData(sce_t)$Input <- "Tissue"
+
+sce_c <- sce[,sce$Input == "cells"]
+rowData(sce_c)$sum <- rowSums2(counts(sce_c))
+rowData(sce_c)$Input <- "Cells"
+
+keep_genes <- intersect(
+  rownames(sce_t),
+  rownames(sce_c)
+)
+
+rd_tissue <- as_tibble(rowData(sce_t[keep_genes,]))
+rd_cells <- as_tibble(rowData(sce_c[keep_genes,]))
+```
+
+Convert to wide tibble
+
+```{r}
+gene_tb <- rbind(
+  rd_tissue,
+  rd_cells
+)
+
+# Add 1 before logging
+gene_tb$sum <- gene_tb$sum + 1
+
+gene_tb_wide <- gene_tb %>%
+  select(Symbol,sum,Input) %>% 
+  pivot_wider(names_from = Input, values_from = sum)
+
+```
+
+Colour in the mitochondrial genes
+
+```{r}
+gene_tb_wide$Gene <- ""
+gene_tb_wide$Gene[grep(pattern = "^RP", x=gene_tb_wide$Symbol)] <- "Ribosomal"
+gene_tb_wide$Gene[grep(pattern = "^MT-", x=gene_tb_wide$Symbol)] <- "Mitochondrial"
+```
+
+# Plot the gene gene correlation
+
+Compute person correlation
+
+```{r corr_gene}
+pc <- cor(x = gene_tb_wide$Tissue, y = gene_tb_wide$Cells, method="pearson")
+sub_title <- paste("Pearson correlation coefficient = ",
+  as.character(
+  round(pc, digits = 2),
+  sep=""))
+```
+
+The `r sub_title`
+
+A pretty terrible correlation
+
+```{r gene_gene_sum}
+plt1 <- ggplot(gene_tb_wide, 
+             aes(x = Cells, y= Tissue, colour=Gene)) + 
+  geom_point(alpha = 0.33, size=1) + 
+  guides(colour = guide_legend(override.aes = list(size=3, alpha=1))) +
+  xlab("Cells") + 
+  ylab("Tissue") +
+  scale_x_continuous(trans='log10') +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "bl") +
+  scale_color_manual(values = c("blue", "red", "orange"), 
+                     labels = c('Other', "Mitochondrial", 'Ribosomal')) +
+  theme_Publication(base_size = 20)
+
+plt1
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

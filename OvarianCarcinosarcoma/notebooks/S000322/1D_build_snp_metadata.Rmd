@@ -1,0 +1,305 @@
+---
+title: "Build snp metadata"
+author: "Daniel Brown based on Peter Hickey report"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=1, 
+                      fig.path='./figures/snpdonor/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = here::here())
+suppressPackageStartupMessages({
+  library(here)
+  library(vcfR)
+  library(pheatmap)
+  library(knitr)
+  library(scuttle)
+  library(gridExtra)
+  library(tidyverse)
+})
+```
+
+# Aim
+I previous compared Total-Seq A hashtag, MULTI-Seq and CellPlex lipid on human PBMCs. All protocols worked pretty well but human PBMCs are the easiest sample to work with.
+
+Then I tried mouse embryonic brain E18.5 which didn't work that well. CellPlex diluted 1:10 worked best here.
+
+## This sample
+Run a more challenging sample = Ovarian carcinosarcome PDX nuclei.  
+Four PDXs were processed with 10x Genomics nuclei isolation kit. A capture was immdiately performed which is the unlabelled.  
+Three more aliquots were labelled in singlicate with cell multiplexing reagents and captured later.
+
+## Comparisons
+
+* Fresh unlabelled nuclei after nuclei isolation with 10x Genomics kit
+* Fixed nuclei nuclei isolation with 10x Genomics kit
+* Fresh nuclei CellPlex 1:10 diluted
+* Fresh nuclei custom MULTI-Seq CMO (Nextera mod)
+* Fresh nuclei 1ug nucleus hashtag Mab414
+
+## Genotyping
+We used cellsnp-lite (v1.2.0) (Huang and Huang 2021) to genotype each scRNA-seq droplet at common SNPs from the 1000 Genomes Project (see scripts/NN236/snp-demultiplexing/cellsnp-lite.sh). This gives us a cell variant call format (VCF) file with genotypes for each droplet, from which we can extract the variant-by-cell matrices of integer counts of the number of reads supporting the reference and alternative allele for each variant in each cell and the total number of reads overlapping each variant in each cell.
+
+## Assigning barcodes to donors
+
+We use vireo (Variational Inference for Reconstructing Ensemble Origin) to assign droplets to donors, using the knowledge that there are 4 donors in the pool (see scripts/NN236/snp-demultiplexing/vireo.sh). This also identifies doublets by identifying any barcodes with genotypes from multiple donors.
+
+```{r, include=FALSE}
+vireo_unlabelled <- read_tsv(here::here(
+  "OvarianCarcinosarcoma/data/snp_demultiplexing/vireo", "G000225_PDX_UTD-hs","donor_ids.tsv"))
+
+vireo_CMO <- read_tsv(here::here(
+  "OvarianCarcinosarcoma/data/snp_demultiplexing/vireo", "G000225_PDX_CMO","donor_ids.tsv"))
+
+vireo_HTO <- read_tsv(here::here(
+  "OvarianCarcinosarcoma/data/snp_demultiplexing/vireo", "G000225_PDX_HTO","donor_ids.tsv"))
+
+vireo_NXT <- read_tsv(here::here(
+  "OvarianCarcinosarcoma/data/snp_demultiplexing/vireo", "G000225_PDX_NXT","donor_ids.tsv"))
+
+vireo_list <- list(vireo_unlabelled, vireo_CMO, vireo_HTO, vireo_NXT)
+names(vireo_list) <- c("G000225_PDX_UTD-hs", "G000225_PDX_CMO", "G000225_PDX_HTO", "G000225_PDX_NXT")
+
+vireo_unlabelled$Protocol <- "Unlabelled"
+vireo_CMO$Protocol <- "CellPlex"
+vireo_HTO$Protocol <- "Hashtag Ab"
+vireo_NXT$Protocol <- "MULTI-Seq CMO"
+
+vireo_df <- rbind(vireo_unlabelled, vireo_CMO, vireo_HTO, vireo_NXT)
+```
+
+The table below summarises the genotype-based demultiplexing results. 
+
+* Unlabelled performed better than all the labelled captures
+* CellPlex suffered a wetting failure so a poor result is expected
+
+```{r}
+vireo_stats <- vireo_df %>% 
+  count(donor_id, Protocol) %>%
+  pivot_wider(names_from = Protocol, values_from=n)
+
+vireo_stats
+```
+
+# Matching donors across assays
+
+The Genotyping and Assigning barcodes to donors is done independently for each capture. As such, there is no guarantee that donor0 in CMO protocol is the same person as donor0 in HTO protocol We therefore then need to match donors across captures by matching their genotypes across captures.
+
+We do this by matching the donor-level genotypes from the scRNA-seq data across pairs of captures.
+
+"G000225_PDX_UTD-hs","donor_ids.tsv"))
+
+"G000225_PDX_CMO","donor_ids.tsv"))
+vireo_CMO$Protocol <- "CellPlex"
+ "G000225_PDX_HTO","donor_ids.tsv"))
+ "G000225_PDX_NXT"
+
+```{r, include=FALSE}
+cn <- c("G000225_PDX_UTD-hs", "G000225_PDX_CMO", "G000225_PDX_HTO", "G000225_PDX_NXT")
+
+file_names <- sapply(cn, function(cn) {
+  here("OvarianCarcinosarcoma/data/snp_demultiplexing/vireo", cn, "GT_donors.vireo.vcf.gz")
+})
+
+list_of_vcf <- lapply(file_names, read.vcfR)
+```
+
+## Create unique ID for each locus in each capture
+
+```{r, include=FALSE}
+# Create unique ID for each locus in each capture.
+list_of_loci <- lapply(list_of_vcf, function(capture_vcf) {
+  paste(
+  capture_vcf@fix[,"CHROM"],  # Chromosome where variant is located
+  capture_vcf@fix[,"POS"],    # Position of variant within chromosome
+  capture_vcf@fix[,"REF"],    # Reference allelic state
+  capture_vcf@fix[,"ALT"],    # Alternate allelic state
+  sep = "_")
+})
+
+# Only keep the loci in common between the 3 captures.
+list_of_common_loci <- lapply(list_of_loci, function(capture_loci) {
+  na.omit(match(Reduce(intersect, list_of_loci), capture_loci))
+})
+
+```
+
+## Construct genotype matrix at common loci from the 3 captures.
+
+The code below is too complicated for Daniel to understand. I checked the outputs and they make sense in terms of the number of cell expected from hashing information.
+There is some parsing of the vcf files and matching according to Daniel's crude understanding
+
+```{r, include=FALSE}
+donor_names <- paste0("donor", 0:3)
+
+g <- mapply(
+  function(capture_vcf, capture_loci) {
+    apply(
+      capture_vcf@gt[capture_loci, donor_names],
+      2,
+      function(x) sapply(strsplit(x, ":"), `[[`, 1))
+  },
+  capture_vcf = list_of_vcf,
+  capture_loci = list_of_common_loci,
+  SIMPLIFY = FALSE)
+
+names(g) <- names(list_of_vcf)
+```
+
+## Count number of genotype matches between pairs of donors 
+
+One from each capture and convert to a proportion. 
+
+```{r, include=FALSE}
+list_of_heatmaps <- lapply(1:length(cn), function(k) {
+  capture_props <- matrix(
+    NA_real_,
+    nrow = length(donor_names),
+    ncol = length(donor_names),
+    dimnames = list(donor_names, donor_names))
+  for (rows in rownames(capture_props)) {
+    for (cols in colnames(capture_props)) {
+      capture_props[rows, cols] <- sum(g[[1]][, rows] == g[[k]][, cols]) / nrow(g[[1]])
+    }
+  }
+  #rownames(capture_props) <- paste0("G000225_PDX_HTO", rownames(capture_props))
+  #colnames(capture_props) <- paste0("G000225_PDX_NXT", colnames(capture_props))
+  capture_props
+})
+
+names(list_of_heatmaps) <- names(g)
+```
+
+##  Match donors between pairs of captures 
+
+Select the pair with the highest proportion of matching genotypes.  
+Rows are the Unlabelled sample which has the best genotype
+
+```{r donor_heatmaps, fig.cap="Rows are the Unlabelled sample which has the best genotype"}
+heatmaps <- lapply(seq_along(list_of_heatmaps), function(k) {
+  pheatmap::pheatmap(
+  list_of_heatmaps[[k]],
+  color = viridisLite::inferno(101),
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  main = names(list_of_heatmaps[k]),
+  silent = TRUE,
+  fontsize = 10)
+})
+gridExtra::grid.arrange(grobs = lapply(heatmaps, `[[`, "gtable"), ncol = 2)
+```
+
+The table below gives the best matches between the captures.  
+
+The CellPlex has given the cleanest signal to noise, possibility because this sample has the fewest cells in the capture and these cells are only the high quality ones.
+
+```{r}
+best_match_df <- data.frame(
+  c(
+    list(rownames(list_of_heatmaps[[1]])),
+    lapply(seq_along(list_of_heatmaps), function(k) {
+      apply(
+        list_of_heatmaps[[k]], 
+        1,
+        function(x) colnames(list_of_heatmaps[[k]])[which.max(x)])
+    })))
+
+colnames(best_match_df) <- cn
+
+best_match_df$genetic_donor <- paste0("donor_", LETTERS[seq_along(donor_names)])
+best_match_df
+```
+
+# Join the SNP IDs back to the cell metadata
+
+```{r}
+sces <- readRDS("/vast/scratch/users/brown.d/S000322/S000322.manual_umi.sces.rds")
+names(sces)
+
+col_data <- list()
+for (i in names(sces)) {
+  col_data[[i]] <- as_tibble(colData(sces[[i]]))
+}
+  
+```
+
+Apply the join to the vcf calls
+
+```{r}
+names(vireo_list)
+names(col_data)
+
+jn_un <- right_join(vireo_list[[1]], col_data[[4]],
+                 by=c("cell"="Barcode"))
+
+jn_cmo <- right_join(vireo_list[[2]], col_data[[1]],
+                 by=c("cell"="Barcode"))
+
+jn_hto <- right_join(vireo_list[[3]], col_data[[2]],
+                 by=c("cell"="Barcode"))
+
+jn_nxt <- right_join(vireo_list[[4]], col_data[[3]],
+                 by=c("cell"="Barcode"))
+
+col_data_list <- list(
+  DataFrame(jn_cmo), 
+  DataFrame(jn_hto), 
+  DataFrame(jn_nxt), 
+  DataFrame(jn_un)
+  )
+
+
+for (i in 1:length(sces)) {
+  colData(sces[[i]]) <- col_data_list[[i]]
+  colnames(sces[[i]]) <- col_data_list[[i]]$cell
+}
+```
+
+## Likely donor of origin Unlabelled sample
+
+* Donor 0 = Donor 2 HTO
+* Donor 1 = Donor 1 MULTI-Seq CMO
+* Donor 2 = Donor 3 MULTI-Seq CMO
+* Donor 3 = Donor 1 MULTI-Seq CMO
+
+```{r}
+unlabelled <- sces[["Unlabelled"]]
+unlabelled$tagDonor <- unlabelled$donor_id
+
+unlabelled$tagDonor[unlabelled$tagDonor == "donor0"] = "donor2_HTO"
+unlabelled$tagDonor[unlabelled$tagDonor == "donor1"] = "donor1_NXT"
+unlabelled$tagDonor[unlabelled$tagDonor == "donor2"] = "donor3_NXT"
+unlabelled$tagDonor[unlabelled$tagDonor == "donor3"] = "donor1_NXT"
+
+ sces[["Unlabelled"]] <- unlabelled
+```
+
+## Write to file
+
+```{r}
+saveRDS(sces,
+  "/vast/scratch/users/brown.d/S000322/S000322.snp-join.rds"
+)
+```
+
+### Session Info
+
+```{r}
+sessionInfo()
+```

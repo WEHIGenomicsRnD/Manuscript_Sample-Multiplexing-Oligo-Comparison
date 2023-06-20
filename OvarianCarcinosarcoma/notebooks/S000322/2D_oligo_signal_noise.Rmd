@@ -1,0 +1,277 @@
+---
+title: "Signal to noise plots"
+author: "Patrick Grave and Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6,
+                      fig.path='./figures/signalNoise/',
+                      layout="l-body-outset")
+knitr::opts_knit$set(root.dir = here::here())
+suppressPackageStartupMessages({
+  library(Matrix)
+  library(tidyverse)
+  library(ggridges)
+  library(DropletUtils)
+  library(patchwork)
+})
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication(base_size = 24))
+```
+
+# Aim
+
+In this notebook compare the oligo count distributions for the 3 protocols I tested.
+
+## This sample
+Run a more challenging sample = Ovarian carcinosarcome PDX nuclei.  
+Four PDXs were processed with 10x Genomics nuclei isolation kit. A capture was immdiately performed which is the unlabelled.  
+Three more aliquots were labelled in singlicate with cell multiplexing reagents and captured later.
+
+## Comparisons
+
+* Fresh unlabelled nuclei after nuclei isolation with 10x Genomics kit
+* Fixed nuclei nuclei isolation with 10x Genomics kit
+* Fresh nuclei CellPlex 1:10 diluted
+* Fresh nuclei custom MULTI-Seq CMO (Nextera mod)
+* Fresh nuclei 1ug nucleus hashtag Mab414
+
+# Read data
+
+These files are generated in scripts/R/S000322_write_tagCounts_file.R
+
+```{r loadData}
+CMO_matrix_dir <- here::here(
+  "/stornext/Projects/score/GenomicsRnD/DB/S000322", "tag_counts", "Cellplex")
+
+NXT_matrix_dir = here::here(
+  "/stornext/Projects/score/GenomicsRnD/DB/S000322", "tag_counts", "MULTIseqCMO")
+
+HTO_matrix_dir = here::here(
+  "/stornext/Projects/score/GenomicsRnD/DB/S000322", "tag_counts", "HashtagAb")
+
+matrix_dir <- list(CMO_matrix_dir, NXT_matrix_dir, HTO_matrix_dir)
+names(matrix_dir) <- c("CMO", "NXT", "HTO")
+```
+
+# Read into tibble format {.tabset}
+
+## CellPlex
+
+```{r readCMO}
+mat <- DropletUtils::read10xCounts(matrix_dir[["CMO"]])
+
+cm <- as.data.frame(
+  Matrix::as.matrix(
+  t(counts(mat)
+  )))
+  
+tb <- cm %>% 
+  pivot_longer(cols = c(CMO301:CMO304),
+               names_to = "Multiplexing_Capture", 
+               values_to = "Count"
+              )
+tb$Protocol <- "CellPlex"
+# Need to add 1 before log
+tb$Count <- tb$Count + 1
+tb_cmo <- tb
+```
+
+## MULTI-Seq CMO
+
+```{r readLMO}
+mat <-  DropletUtils::read10xCounts(matrix_dir[["NXT"]])
+cm <- as.data.frame(
+  Matrix::as.matrix(
+  t(counts(mat)
+  )))
+  
+tb <- cm %>% 
+  pivot_longer(cols = c(Nxt_451:Nxt_455),
+               names_to = "Multiplexing_Capture", 
+               values_to = "Count"
+              )
+tb$Protocol <- "MULTI-Seq CMO"
+# Need to add 1 before log
+tb$Count <- tb$Count + 1
+
+tb_lmo <- tb
+```
+
+## Hashtag Ab
+
+```{r readNXT}
+mat <-  DropletUtils::read10xCounts(matrix_dir[["HTO"]])
+cm <- as.data.frame(
+  Matrix::as.matrix(
+  t(counts(mat)
+  )))
+  
+tb <- cm %>% 
+  pivot_longer(cols = c(HTO_1:HTO_4),
+               names_to = "Multiplexing_Capture", 
+               values_to = "Count"
+              )
+tb$Protocol <- "Hashtag Ab"
+# Need to add 1 before log
+tb$Count <- tb$Count + 1
+
+tb_hto <- tb
+```
+
+We end by saving objects
+
+```{r save}
+tb <- list(
+  tb_cmo,
+  tb_lmo,
+  tb_hto
+)
+
+names(tb) <- c("CellPlex", "MULTI-Seq CMO" ,"Hashtag Ab")
+saveRDS(tb, here::here(
+  "OvarianCarcinosarcoma/data/Matrices", "signal_noise_counts.tb.rds"
+))
+```
+
+# GGridges plots {.tabset}
+
+The plot I liked most is [https://cran.r-project.org/web/packages/ggridges/vignettes/introduction.html](GGridges)
+
+## CellPlex
+
+Looks better than on the cellranger summaries. Wider distribution than the other protocols indicative of comprimised cells.
+
+```{r plt_cmo, fig.cap="CellPlex signal to noise"}
+plt_cmo <- ggplot(tb_cmo, aes(x = Count, y = Multiplexing_Capture, 
+                   fill = Multiplexing_Capture)) +
+  geom_density_ridges(alpha=0.66) +
+  scale_x_continuous(trans='log10', limits = c(1,1e4)) +
+  annotation_logticks(base = 10, sides = "b") +
+  theme_ridges(font_size = 22) + 
+  #scale_fill_brewer(palette = "Set1") +
+  ylab("") + xlab("") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(legend.position = "none")
+
+plt_cmo
+```
+
+## MULTI-Seq CMO
+
+Bimodal distribution in most of the samples but not a big shift and the distributions merge into each other.
+
+```{r plt_nxt, fig.cap="MULTI-Seq CMO signal to noise"}
+plt_lmo <- ggplot(tb_lmo, aes(x = Count, y = Multiplexing_Capture, 
+                   fill = Multiplexing_Capture)) +
+  geom_density_ridges(alpha=0.66) +
+  scale_x_continuous(trans='log10', limits = c(1,1e4)) +
+  annotation_logticks(base = 10, sides = "b") +
+  theme_ridges(font_size = 22) + 
+  #scale_fill_brewer(palette = "Dark2") +
+  ylab("") + xlab("") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(legend.position = "none")
+
+plt_lmo
+```
+
+## Hashtag Ab
+
+Narrow distribution indicate less oligo swapping. However not a largee shift for positive cells.
+
+```{r plt_hto, fig.cap="Hashtag Ab signal to noise"}
+plt_hto <- ggplot(tb_hto, aes(x = Count, y = Multiplexing_Capture, 
+                   fill = Multiplexing_Capture)) +
+  geom_density_ridges(alpha=0.66) +
+  scale_x_continuous(trans='log10', limits = c(1,1e4)) +
+  annotation_logticks(base = 10, sides = "b") +
+  theme_ridges(font_size = 22) + 
+  #scale_fill_brewer(palette = "Dark2") +
+  ylab("") + xlab("") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(legend.position = "none")
+
+plt_hto
+```
+
+# Gather ggridges into 1 plot
+
+The aim is to reproduce the output of the cellranger report
+
+```{r, fig.asp=1, fig.cap="Summary plot"}
+plt_cmo / plt_lmo / plt_hto
+```
+
+# Visualise signal to noise
+
+```{r}
+sn <- read_csv(here::here(
+  "OvarianCarcinosarcoma/data/Matrices", "signal_noise_ratio.csv"
+))
+
+sn$Protocol <- substr(sn$`CMO Name`, 1, 3)
+sn$Protocol <- recode(sn$Protocol,
+                      "HTO" = "Hashtag Ab",
+                      "Nxt" = "MULTI-Seq CMO",
+                      "CMO" = "CellPlex 1:10")
+
+```
+
+I copy pasted the signal to noise ratio from the cell rangere multi reports from each protocol.
+
+Mung the names of the tags
+
+```{r}
+sn$CellRangerCall <- sn$`CMO Name`
+
+sn$CellRangerCall <- recode(sn$CellRangerCall,
+                      CMO301="Tag1",
+                      CMO302="Tag2",
+                      CMO303="Tag3",
+                      CMO304="Tag4",
+                      HTO_1="Tag1",
+                      HTO_2="Tag2",
+                      HTO_3= "Tag3",
+                      HTO_4= "Tag4",
+                      "Nxt_451"= "Tag1",
+                      "Nxt_452"= "Tag2",
+                      "Nxt_453"= "Tag3",
+                      "Nxt_455"= "Tag4",
+)
+```
+
+
+Something is different about the 4th sample. Maybe FACS sorting order which I need too check.  
+Here the hashtag antibody has worked best although it is below the recommended signal to noise ratio of 5.
+
+```{r signal_noise, fig.cap="Signal to noise from cell ranger"}
+plt4 <- ggplot(data=sn) +
+  geom_jitter(aes(y=`CMO signal-to-noise ratio`, x=Protocol, colour=CellRangerCall), 
+              size=3, width = 0.15, show.legend=FALSE) +
+  scale_y_continuous(breaks=seq(0,10,1)) +
+  xlab("") + ylab("Signal to\n noise ratio")
+
+plt4
+```
+
+## Session info
+```{r sessionInfo}
+sessionInfo()
+```

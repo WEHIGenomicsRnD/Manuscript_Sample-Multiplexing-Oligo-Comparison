@@ -1,0 +1,5 @@
+id,name,read,pattern,sequence,feature_type
+HTO_1,HTO_1,R2,5P(BC),TTCCTGCCATTACTA,Multiplexing Capture
+HTO_2,HTO_2,R2,5P(BC),CCGTACCTCATTGTT,Multiplexing Capture
+HTO_3,HTO_3,R2,5P(BC),GGTAGATGTCCTCAG,Multiplexing Capture
+HTO_4,HTO_4,R2,5P(BC),TGGTGTCATTCTTGA,Multiplexing Capture

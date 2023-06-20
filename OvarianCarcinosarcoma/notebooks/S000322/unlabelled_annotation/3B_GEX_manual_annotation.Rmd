@@ -1,0 +1,332 @@
+---
+title: "GEX manual annotation based on marker genes"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='../figures/unlabelld_gex_man_anno/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(patchwork)
+  library(scuttle)
+  library(scater)
+  library(scran)
+  library(viridis)
+  })
+
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+
+Visualise the clusters and marker genes and annotate based on literature and GTEx portal.  
+Here I remove cells with a snp call.
+
+## Samples
+
+* Fresh unlabelled nuclei after nuclei isolation with 10x Genomics kit
+* Fresh unlabelled nuclei with ambient RNA removal
+
+# Load Data
+
+From the *3A_GEX_marker_genes* notebook in the parental directory
+
+Note the unlabelled dataset and ambient remove dataset are the same. I ran a ambient removal tool in scran to derive the ambient RNA remove object from the base daataset
+
+```{r loadData}
+sce_list <- readRDS((
+  "/vast/scratch/users/brown.d/S000322/S000322.cluster.rds"
+))
+
+marker_unlab <- read_csv(here::here(
+   "OvarianCarcinosarcoma/data/Matrices/marker_genes", paste("unlabelled","top_marker_list.csv", sep="_")
+))
+marker_ambient <- read_csv(here::here(
+   "OvarianCarcinosarcoma/data/Matrices/marker_genes", paste("unlab_ambient","top_marker_list.csv", sep="_")
+))
+
+capture <- names(sce_list)
+capture
+
+sce <- sce_list[["Unlabelled"]]
+#saveRDS(sce, "/vast/scratch/users/brown.d/S000322/G000178_unlabelled_nuclei-PDX.rds")
+# saveRDS(sce, "/stornext/General/scratch/GP_Transfer/Hadla/forAnthony_Hadla/220809_tenX_fresh_nuclei/G000178_unlabelled_nuclei-PDX.rds") Save for bioinformatics team to analyse
+```
+
+## Filter Unlabelled capture snp calls
+
+Filter the sce object for only snp assignments. Therefore remove unassigned and doublets.
+
+```{r}
+tb <- as_tibble(colData(sce))
+
+tb %>% 
+  dplyr::count(donor_id, cluster) %>% 
+  pivot_wider(names_from = cluster, values_from = n)
+```
+
+The majority of donors are exclusive the the major clusters 1 - 3 and 5.  
+Remove doublets and unassigned.
+
+```{r}
+sce_orig <- sce
+sce <- sce[,!sce$donor_id == "doublet"]
+sce <- sce[,!sce$donor_id == "unassigned"]
+
+tb <- as_tibble(colData(sce))
+
+tb %>% 
+  dplyr::count(donor_id, cluster) %>% 
+  pivot_wider(names_from = cluster, values_from = n)
+```
+
+## Recap clusters in a PCA plot
+
+Look at the PCA of only the unlabelled sample
+
+```{r pca_plt_unlabelled, fig.width=8, fig.height=2}
+
+pca_plt <- plotReducedDim(sce, dimred="PCA", colour_by = "detected") + theme_Publication(base_size = 16)
+pca_plt2 <- plotReducedDim(sce, dimred="PCA", colour_by = "donor_id") + theme_Publication(base_size = 16)
+
+pca_plt + pca_plt2
+```
+
+## Recap clusters in a UMAP
+
+There are 4 clusters in the basic dataset that does not have ambient RNA removal. This is surely the 4 donors which is normally the case in tumour data that cells separate by genetic origin.
+
+There are 2 more clusters in the ambient RNA (computationally) removed dataset. Cluster 6 projects from cluster 2 and doesn't have distinct marker gene. I suspect doublets. 
+
+Cluster 7 looks like compromised cells with higher mitochondrial counts.
+
+For now I focus the analysis on the unlabeled for simplicity sake.
+
+```{r umap_cluster}
+umap_plt <- plotReducedDim(sce, dimred="UMAP", colour_by="cluster") + 
+    theme_Publication()
+
+umap_plt
+```
+
+The number of cells from each donor is pretty even.
+
+## Visualise clusters by donor
+
+As expected the clusters are the genetic donor
+
+```{r umap_donor}
+umap_donor <- plotReducedDim(sce, dimred="UMAP", colour_by="donor_id") + 
+    theme_Publication()
+
+umap_donor
+```
+
+## Visulaise mitochndiral percent by donor
+
+```{r mito_p}
+plt3 <- ggplot(tb, 
+             aes(x = donor_id, y= subsets_Mito_percent, fill = donor_id)) + 
+  geom_boxplot(show.legend = FALSE, outlier.size = 0.2, outlier.alpha = 0.25) + 
+  ylab("Mitochondrial percentage") + 
+  xlab("") +
+  scale_fill_brewer(palette = "Dark2")
+
+plt3
+```
+
+## Visualise marker genes by cluster
+
+The marker genes look very similar between base dataset and ambient removed dataset. More mitochondrial genes and a miRNA are added in the ambient removed.
+
+```{r unlabelled_marker, fig.height=10, fig.width=10}
+marker_genes <- unique(gsub("^\\.","", marker_unlab$gene.symbol))
+
+dot_unlabel<- plotDots(sce, 
+         features = marker_genes, 
+         group="cluster", color=plasma(100)) +
+  labs(title = "Unlabelled", y = "", x = "Cluster", color = "Log counts", size="Proportion of cells") +
+  theme_Publication()
+
+dot_unlabel
+```
+
+# Description marker genes {.tabset}
+
+These I got from the literature and GTEx, which lists bulk RNA profiles from normal tissues. I did not find a quick to use cancer expression browser. TCGA was not useful.
+
+## MET cluster 1
+
+MET Proto-Oncogene, Receptor Tyrosine Kinase
+
+This gene encodes a member of the receptor tyrosine kinase family of proteins. Binding of its ligand, hepatocyte growth factor, induces dimerization and activation of the receptor, which plays a role in cellular survival, embryogenesis, and cellular migration and invasion. 
+
+Mutations in this gene are associated with papillary renal cell carcinoma, hepatocellular carcinoma, and various head and neck cancers. Amplification and overexpression of this gene are also associated with multiple human cancers. MET mutations have been detected in 9% of advanced breast cancer (20) and 7.4% advanced ovarian cancer patients
+
+## NSD2 cluster 2
+
+GTEx - high in EBV transformed cells
+
+It is expressed ubiquitously in early development. Wolf-Hirschhorn syndrome (WHS) is a malformation syndrome associated with a hemizygous deletion of the distal short arm of chromosome 4.  
+Studies have shown that NSD2 is frequently over-expressed in multiple types of aggressive solid tumors, including breast cancer, renal cancer, prostate cancer, cervical cancer, and osteosarcoma.
+
+## TM9SF4 cluster 2
+
+In GTEx it is high in fibrosblasts and ecto cervix
+
+Regulates the assembly and activity of V-ATPase in colon cancer cells via its interaction with V-type proton ATPase subunit H (ATP6V1H) and contributes to V-ATPase-mediated pH alterations in cancer cells which play an important role in drug resistance and invasiveness of colon cancer cells. Plays an important role in an atypical phagocytic activity of metastatic melanoma cells called cannibalism and is involved in the pH regulation of the intracellular vesicles in tumor cells.
+
+In cancer cells, TM9SF4 is reported to interact with vacuolar H+-ATPase to promote acidification in early endosomes and extracellular tumor environment, which is associated with cannibalistic activity of metastatic melanoma cells [11, 17] and invasiveness and chemoresistance of colon cancer cells
+
+## ZBTB20 cluster 5
+
+In GTEx it is super high in testis
+
+Acts as a transcriptional repressor and plays a role in many processes including neurogenesis, glucose homeostasis, and postnatal growth. Mutations in this gene have been associated with Primrose syndrome
+
+## SORCS1 cluster 5
+
+GTEx high in nerve tibial.  
+
+Suppressor Of Cytokine Signaling 1. The protein encoded by this gene functions downstream of cytokine receptors, and takes part in a negative feedback loop to attenuate cytokine signaling. Knockout studies in mice suggested the role of this gene as a modulator of IFN-gamma action.
+
+## DACH1 cluster 3
+
+GTEx endocervix
+
+This gene encodes a chromatin-associated protein that associates with other DNA-binding transcription factors to regulate gene expression and cell fate determination during development.  Expression of this gene is lost in some forms of metastatic cancer, and is correlated with poor prognosis.
+
+## KIF26B cluster 3
+
+GTEx high in stomach and bladder. 
+
+The protein encoded by this gene is an intracellular motor protein thought to transport organelles along microtubules. The encoded protein is required for kidney development. Elevated levels of this protein have been found in some breast and colorectal cancers.
+
+## Cluster 4
+
+Contains low quality cells. Can be seen from library size.
+
+# Recode the clusters with manual annotation
+
+```{r}
+coldata_unlabelled <- as_tibble(colData(sce))
+
+coldata_unlabelled$logSum <- log(coldata_unlabelled$sum +1) 
+
+coldata_unlabelled$man_anno <- recode(coldata_unlabelled$cluster,
+  "1" = "MET activated",
+  "2" = "Ectocervix",
+  "3" = "Endocervix",
+  "4" = "Low quality",
+  "5" = "IFN-y activated",
+  "6" = "None",
+  "7" = "None",
+  "8" = "None",
+  "9" = "None",
+  "10" = "None",
+  "11" = "None",
+)
+
+coldata_unlabelled <- coldata_unlabelled %>% 
+  select(donor_id, cell, Protocol, sum:total, sizeFactor:man_anno)
+
+colData(sce) <- DataFrame(coldata_unlabelled)
+```
+
+# Visualise manual annotations {.tabset}
+
+The clusters are highly likely to be the 4 donors and these labels are a descriptive property of their tumour.
+
+## Expression of a subset of marker genes by donor
+
+```{r marker_expr_donor, fig.asp=1}
+marker_genes_subset <- c("MET", "TM9SF4", "NSD2", "SORCS1", "DACH1", "KIF26B")
+sce_man <- sce[,!sce$man_anno == "None"]
+
+plotExpression(sce_man, features=marker_genes_subset, 
+    x="donor_id", colour_by="man_anno") +
+  xlab("Daniel's' annotation") + theme_Publication()
+```
+
+## UMAP with annotation
+
+```{r umap_anno}
+umap_plt <- plotReducedDim(sce, dimred="UMAP", colour_by="man_anno")
+
+umap_plt + scale_colour_discrete(name="Daniel's annotation") + 
+  theme_Publication()
+```
+
+## PCA with annotation
+
+1% variation explained on each axis is not much.
+
+```{r pca_anno}
+
+pca_plt <- plotReducedDim(sce, dimred="PCA", colour_by="man_anno")
+
+pca_plt + scale_colour_discrete(name="Daniel's annotation") + 
+  theme_Publication()
+```
+
+## Expression of a subset of marker genes
+
+For the purposes of visualisation remove cells that I did not manually annotate
+
+```{r marker_expression, fig.asp=1}
+plotExpression(sce_man, features=marker_genes, 
+    x="cluster", colour_by="man_anno") +
+  xlab("Daniel's' annotation") + theme_Publication()
+```
+
+## Quality control metrics
+
+```{r qc_violin, fig.height=8, fig.width=12}
+mito <- plotColData(sce, y="subsets_Mito_percent", 
+    x="man_anno", colour_by="logSum") +
+  xlab("") + theme_Publication()
+
+libSize <- plotColData(sce, y="logSum", 
+    x="man_anno", colour_by="man_anno") +
+  xlab("Daniel's' annotation") + ylab("Log10 library size") + 
+  theme_Publication()
+
+mouse <- plotColData(sce, y="altexps_Mouse_percent", 
+    x="man_anno", colour_by="logSum") +
+  xlab("") + theme_Publication()
+
+(mito + mouse) / libSize + theme(legend.position = "none")
+```
+
+# Save SCE object
+
+```{r}
+saveRDS(sce,
+  "/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/PDX/S000322_unlabelled.man_anno.rds")
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

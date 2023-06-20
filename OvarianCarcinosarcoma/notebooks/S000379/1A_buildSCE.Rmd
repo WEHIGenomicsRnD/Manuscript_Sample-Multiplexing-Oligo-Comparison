@@ -1,0 +1,177 @@
+---
+title: "Build SingleCellExperiment object S000379"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/build_SCE/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+suppressPackageStartupMessages({
+  library(DropletUtils)
+  library(tidyverse)
+  library(patchwork)
+  library(scran)
+  library(scater)
+  })
+
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+
+The poor quality of the fixed nuclei from the Ovarian carcinosaroma PDX experiment prompted an attempt to fix intact fresh cells instead.
+
+2x PDX tumours split into pieces:
+
+Take 25mg from each tumour, mince into pieces and fix for "fix and chop" protocol
+To be dissociated with Scott lab enzymes after 4C storage
+Take the remainder and dissociate fresh tissue with Sccott lab enzymes 
+Collagenase, dispase, DNase
+Perform RBC lysis
+Fix 2 million cells
+The tumours fixed were:
+
+* PDX1264
+* PDX1233
+
+The time between fixing the tissue and fixing the dissociated cells was approximately 2 hours.
+The sample didn't dissociate fully after 20 min at 37C.
+He put the sample for 20 more min at 37C. c.f the fresh tissue takes ~45min.
+After 40min the fixed tissue still not dissociating. Anthony filtered with 100uM filter
+I resuspended in quenching buffer and added 10% v/v enhancer for 4C storage
+
+## Sample omission
+
+The sample hybridisated with probeset BC2 was low in cell number and very clumpy. Because the last time I ran PDX tumour fixed nuclei the 10x Genomics channel blocked - I omitted this sample.
+
+Therefore only PDX1233 has a matched fix/chop vs fixed dissociated cells
+
+## Capture issue
+
+Daniel Brown
+-
+Gery Ma of 10x Genomics came onsite to supervise the capture. I counted the pooled cell suspension to ~4,000 cells/uL in 500uL
+
+Targeted 28,000 cells to recover because the countess underestimated the count. After capture was short of GEM volume by ~5uL. There was excess gel bead volume ~40uL
+
+Gerry recommended to capture again with a reimbursed reaction. However had the same issue. Incubated both captures.
+
+More likely in my opinion to be the slight clumping which Gerry said was OK.
+
+## Low librrary concentrration
+
+* Capture 1 = 1.21ng/uL
+  + 6.84nM
+* Capture 2 = 1.5ng/uL
+  + 8.48nM
+
+# Load Data
+
+Read in the filtered sample specific matrices then combine.
+
+```{r capture1}
+cap1_samples <- c("PDX1233-cells", "PDX1233-tissue", "PDX1264-cells")
+cap1_head <- "/stornext/Projects/score/GenomicsRnD/DB/S000379/R010_PDX_FLEX-1/outs/per_sample_outs/"
+tail_path <- "/count/sample_filtered_feature_bc_matrix"
+
+cap1 <- list()
+for (i in cap1_samples) {
+  path <- paste(cap1_head, i, tail_path, sep = "")
+  cap1[[i]] <- read10xCounts(path, col.names = T)
+}
+
+cap1[["PDX1233-cells"]]$Sample <- "PDX1233-cells"
+cap1[["PDX1233-tissue"]]$Sample <- "PDX1233-tissue"
+cap1[["PDX1264-cells"]]$Sample <- "PDX1264-cells"
+
+capture1 <- cbind(
+  cap1[["PDX1233-cells"]],
+  cap1[["PDX1233-tissue"]],
+  cap1[["PDX1264-cells"]]
+)
+```
+
+Capture 2
+
+```{r capture2}
+cap2_samples <- c("PDX1233-cells", "PDX1233-tissue", "PDX1264-cells")
+cap2_head <- "/stornext/Projects/score/GenomicsRnD/DB/S000379/R010_PDX_FLEX-2/outs/per_sample_outs/"
+tail_path <- "/count/sample_filtered_feature_bc_matrix"
+
+cap2 <- list()
+for (i in cap2_samples) {
+  path <- paste(cap2_head, i, tail_path, sep = "")
+  cap2[[i]] <- read10xCounts(path, col.names = T)
+}
+
+cap2[["PDX1233-cells"]]$Sample <- "PDX1233-cells"
+cap2[["PDX1233-tissue"]]$Sample <- "PDX1233-tissue"
+cap2[["PDX1264-cells"]]$Sample <- "PDX1264-cells"
+
+capture2 <- cbind(
+  cap2[["PDX1233-cells"]],
+  cap2[["PDX1233-tissue"]],
+  cap2[["PDX1264-cells"]]
+)
+```
+
+Combine both captures together
+
+```{r}
+dim(capture1)
+dim(capture2)
+
+capture1$Capture <- "One"
+capture2$Capture <- "Two"
+
+sce <- cbind(
+  capture1,
+  capture2
+)
+```
+
+Add the gene symbols as row names
+
+```{r}
+row.names(sce) <- rowData(sce)$Symbol
+```
+
+Mitochondrial gene metrics and QC
+
+```{r}
+is.mito <- grepl("^MT", rownames(sce))
+sce <- addPerCellQCMetrics(sce, subsets=list(Mito=is.mito))
+sce <- addPerFeatureQC(sce)
+```
+
+Save outputs
+
+```{r}
+saveRDS(sce, "/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/PDX/S000379_basic.sce.rds")
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

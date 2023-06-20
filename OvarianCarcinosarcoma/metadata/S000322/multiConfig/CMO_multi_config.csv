@@ -1,0 +1,19 @@
+[gene-expression],,
+reference,/stornext/Projects/score/Indexes/refdata-gex-GRCh38-and-mm10-2020-A
+cmo-set,/stornext/Home/data/allstaff/b/brown.d/Projects/G000225_Cell_Multiplexing/OvarianCarcinosarcoma/metadata/S000322/featureRef/CMO_Feature_Ref.csv
+expect-cells,18000
+chemistry,SC3Pv3
+
+,,
+[libraries],,
+fastq_id,fastqs,feature_types
+R010_PDX_CMO_GEX,/stornext/Projects/score/GenomicsRnD/DB/S000322/fastq/AAANMYTHV,Gene Expression
+R010_PDX_CMO_TAG,/stornext/Projects/score/GenomicsRnD/DB/S000322/fastq/AAANMYTHV,Multiplexing Capture
+
+,,
+[samples],,
+sample_id,cmo_ids,
+PDX117,CMO301
+PDX233,CMO302
+PDX105,CMO303
+PDX264,CMO304

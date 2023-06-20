@@ -1,0 +1,281 @@
+---
+title: "Oligo Normlisation and Visualisation"
+author: "Daniel Brown"
+description: "Quality control and normalise"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache.lazy = FALSE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/oligo_cluster/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = here::here())
+library(scater)
+library(scran)
+library(scuttle)
+library(pheatmap)
+library(patchwork)
+library(knitr)
+library(tidyverse)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+
+In this notebook normalise and cluster the oligo tag counts.
+
+## This sample
+Run a more challenging sample = Ovarian carcinosarcome PDX nuclei.  
+Four PDXs were processed with 10x Genomics nuclei isolation kit. A capture was immdiately performed which is the unlabelled.  
+Three more aliquots were labelled in singlicate with cell multiplexing reagents and captured later.
+
+## Comparisons
+
+* Fresh unlabelled nuclei after nuclei isolation with 10x Genomics kit
+* Fixed nuclei nuclei isolation with 10x Genomics kit
+* Fresh nuclei CellPlex 1:10 diluted
+* Fresh nuclei custom MULTI-Seq CMO (Nextera mod)
+* Fresh nuclei 1ug nucleus hashtag Mab414
+
+## Load Data
+
+These SingleCellExperiment objects were generated in 2C_GEX_cluster_visualise notebook.  
+Remove the unlabelled captures which as the name suggests do not have a alternative expt slot fo multiplexing tag oligos.
+
+```{r loadData}
+all.sce <- readRDS(here::here(
+  "/vast/scratch/users/brown.d/S000322/S000322.cluster.rds"
+  ))
+names(all.sce)
+
+all.sce <- all.sce[c("CellPlex","MULTI-Seq CMO" ,"Hashtag Ab")]
+names(all.sce)
+
+```
+
+# Oligo: Quality control
+Here I am primarily working with the “alternative Experiment” slot of the SCEs.
+
+## Use of quality control metrics
+
+I will skip quality control here as this is primarily for large marker panels where not all markers are expected to be expressed.
+
+The second quality control is ambient oligos. I am expressely interested in this ambient contamination so I will leave it in.
+
+# Oligo Normalization
+
+## Median normalization
+
+Use the most basic normalisation as composition biases and other differences are of interest to my study. 
+
+```{r normalise}
+set.seed(666)
+
+for (n in names(all.sce)) {
+    #current <- all.sce[[n]]
+    current <- swapAltExp(all.sce[[n]], name="Multiplexing Capture", saved="GEX")
+    sf.geo <- geometricSizeFactors(current)
+    sizeFactors(current) <- sf.geo
+    current <- logNormCounts(current)
+    all.sce[[n]] <- swapAltExp(current, "GEX")
+}
+
+assayNames(current)
+```
+
+# Clustering
+We can apply downstream procedures like clustering and visualization on the log-normalized abundance matrix for the ADTs (Figure 12.7). Alternatively, if we had generated a matrix of PCs, we could use that as well.
+
+```{r umap, cache=TRUE}
+set.seed(999)
+
+for (n in names(all.sce)) {
+    current <- swapAltExp(all.sce[[n]], name="Multiplexing Capture", saved="GEX")
+    # clusters.adt <- current$mul_Assignment Need cell hashr data
+    clusters.adt <- current$cluster # Temporary GEX cluster labels
+    current <- runUMAP(current)
+    colLabels(current) <- factor(clusters.adt)
+    all.sce[[n]] <- current
+}
+```
+
+# Plot UMAP {.tabset}
+
+## CellPlex
+
+There are 2 sub clusters for each tag. Probably lymphoid and myleoid.
+
+```{r umap_cmo, fig.cap="CellPlex"}
+p1 <- plotUMAP(all.sce[["CellPlex"]], 
+         colour_by="label")
+
+p1 + theme_Publication()
+```
+
+## MULTI-Seq CMO
+
+
+```{r umap_lmo, fig.cap="MULTI-SeqCMO"}
+p2 <- plotUMAP(all.sce[["MULTI-Seq CMO"]], 
+         colour_by="label")
+
+p2 + theme_Publication()
+```
+
+## Hashtag antibody
+
+```{r umap_hto, fig.cap="HashtagAb"}
+p3 <- plotUMAP(all.sce[["Hashtag Ab"]], 
+         colour_by="label")
+
+p3 + theme_Publication()
+```
+
+# UMAP together
+
+```{r umap_combine, fig.asp=1, fig.cap="Combined UMAP"}
+p1 + theme_Publication() +
+  p2 + theme_Publication() + 
+  p3 + theme_Publication() +
+  plot_layout(guides = "collect", ncol = 2)
+
+```
+
+# Heatmaps {.tabset}
+
+```{r sumcounts}
+all_ave <- list()
+
+for (n in names(all.sce)) {
+    current <- all.sce[[n]]
+    se.averaged <- sumCountsAcrossCells(current,
+                                        ids=current$cluster, # Change to donor identity when info is available
+    exprs_values="logcounts", average=TRUE)
+    all_ave[[n]] <- assay(se.averaged)
+}
+
+names(all_ave) <- names(all.sce)
+```
+
+## CellPlex
+
+```{r cellplex_heat}
+current <- "CellPlex"
+set.seed(666)
+cells <- sample(2500)
+
+normcounts <- logcounts(all.sce[[current]][,cells])
+
+# Update my_sample_col data when genotypes are available
+my_sample_col <- as.data.frame(colData(
+  all.sce[[current]][,cells]
+  )[,c("cluster","htodemux", "consensuscall.global")]
+  )
+
+pheatmap(normcounts,
+         annotation_col = my_sample_col,
+         cluster_rows=FALSE,
+         cluster_cols = TRUE,
+         treeheight_col=0,
+         show_rownames=TRUE,
+         show_colnames = FALSE,
+         fontsize_col=3,
+         labels_col=row.names(current)
+         )
+```
+
+## MULTI-Seq CMO
+
+```{r MULTI-Seq_heat}
+current <- "MULTI-Seq CMO"
+set.seed(666)
+cells <- sample(2500)
+
+normcounts <- logcounts(all.sce[[current]][,cells])
+
+# Update my_sample_col data when genotypes are available
+my_sample_col <- as.data.frame(colData(
+  all.sce[[current]][,cells]
+  )[,c("cluster","htodemux", "consensuscall.global")]
+  )
+
+pheatmap(normcounts,
+         annotation_col = my_sample_col,
+         cluster_rows=FALSE,
+         cluster_cols = TRUE,
+         treeheight_col=0,
+         show_rownames=TRUE,
+         show_colnames = FALSE,
+         fontsize_col=3,
+         labels_col=row.names(current)
+         )
+```
+
+## Hashtag Ab
+
+```{r hashtag_heat}
+current <- "Hashtag Ab"
+set.seed(666)
+cells <- sample(2500)
+
+normcounts <- logcounts(all.sce[[current]][,cells])
+
+# Update my_sample_col data when genotypes are available
+my_sample_col <- as.data.frame(colData(
+  all.sce[[current]][,cells]
+  )[,c("cluster","htodemux", "consensuscall.global")]
+  )
+
+pheatmap(normcounts,
+         annotation_col = my_sample_col,
+         cluster_rows=FALSE,
+         cluster_cols = TRUE,
+         treeheight_col=0,
+         show_rownames=TRUE,
+         show_colnames = FALSE,
+         fontsize_col=3,
+         labels_col=row.names(current)
+         )
+```
+
+# Save SCE Objects
+
+```{r saveSCEs, eval=FALSE}
+for (n in names(all.sce)) {
+    all.sce[[n]] <- swapAltExp(current, "GEX")
+}
+
+saveRDS("/vast/scratch/users/brown.d/S000322/S000322.tag_cluster.rds")
+
+```
+
+## Conclusion
+
+To write
+
+## Next steps
+
+Quality control of the gene expression data described in the GEX_QC_Norm.Rmd
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

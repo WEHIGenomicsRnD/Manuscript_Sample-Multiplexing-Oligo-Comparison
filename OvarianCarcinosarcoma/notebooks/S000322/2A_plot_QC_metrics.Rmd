@@ -1,0 +1,355 @@
+---
+title: "Quality control plots"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/qc_plots/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(patchwork)
+  })
+
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication(base_size = 18))
+```
+
+# Aim
+I previous compared Total-Seq A hashtag, MULTI-Seq and CellPlex lipid on human PBMCs. All protocols worked pretty well but human PBMCs are the easiest sample to work with.
+
+Then I tried mouse embryonic brain E18.5 which didn't work that well. CellPlex diluted 1:10 worked best here.
+
+## This sample
+Run a more challenging sample = Ovarian carcinosarcome PDX nuclei.  
+Four PDXs were processed with 10x Genomics nuclei isolation kit. A capture was immdiately performed which is the unlabelled.  
+Three more aliquots were labelled in singlicate with cell multiplexing reagents and captured later.
+
+## Comparisons
+
+* Fresh unlabelled nuclei after nuclei isolation with 10x Genomics kit
+* Fixed nuclei nuclei isolation with 10x Genomics kit
+* Fresh nuclei CellPlex 1:10 diluted
+* Fresh nuclei custom MULTI-Seq CMO (Nextera mod)
+* Fresh nuclei 1ug nucleus hashtag Mab414
+
+# Load Data
+
+Find the paths to the cell ranger output. From cell_calling notebook.  
+Start by removing ambient RNA from the unlabelled capture only to check if it is usful or not.
+
+```{r loadData}
+tb <- read_csv(here::here(
+  "OvarianCarcinosarcoma/data/Matrices", "quality_control_unified.csv.gz"
+))
+
+tb %>% 
+  select(-Sample)
+```
+
+The number of cells in each capture
+
+```{r}
+tb %>% 
+  dplyr::count(Protocol)
+```
+
+# Quality control meetrics {.tabset}
+
+## Library size
+
+```{r libSize_p, fig.cap="Library size in deduplicated UMIs"}
+plt1 <- ggplot(tb, 
+             aes(x = Protocol, y= sum+1, fill = Protocol)) + 
+  geom_violin(show.legend = FALSE) + 
+  ylab("Library Size (UMIs)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Dark2") 
+
+plt1
+```
+
+## Detected genes
+
+```{r detected_genes_p, fig.cap="Number of detected genes"}
+plt2 <- ggplot(tb, 
+             aes(x = Protocol, y= detected, fill = Protocol)) + 
+  geom_violin(show.legend = FALSE) + 
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "l") +
+  ylab("Detected genes") + 
+  xlab("") +
+  scale_fill_brewer(palette = "Dark2")
+
+plt2
+```
+
+## Mitochondiral percentage
+
+```{r mito_per_p, fig.cap="Mitochondrial percentage of total counts"}
+plt3 <- ggplot(tb, 
+             aes(x = Protocol, y= subsets_Mito_percent, fill = Protocol)) + 
+  geom_boxplot(show.legend = FALSE, outlier.size = 0.2, outlier.alpha = 0.25) + 
+  ylab("Mitochondrial percentage") + 
+  xlab("") +
+  scale_y_continuous(breaks=seq(0,100,10)) +
+  scale_fill_brewer(palette = "Dark2")
+
+plt3
+```
+
+## Mito for only the unlabelled capture
+
+```{r mito_per_unlab, fig.cap="Mitochondrial percentage of total counts"}
+unlab <- tb %>% 
+  filter(Protocol == "Unlabelled") %>% 
+  filter(donor_id != "doublet") %>% 
+  filter(donor_id != "unassigned")
+
+mt_uld <- ggplot(unlab, 
+             aes(x = donor_id, y= subsets_Mito_percent, fill = donor_id)) + 
+  geom_boxplot(show.legend = FALSE, outlier.size = 0.2, outlier.alpha = 0.25) + 
+  ylab("Mitochondrial percentage") + 
+  xlab("") +
+  scale_fill_brewer(palette = "Dark2")
+
+mt_uld
+```
+
+## Genes v UMIs
+
+```{r gene_umi, fig.cap="UMIs versus genes"}
+plt4 <- ggplot(tb, 
+             aes(x = detected+1, y= sum+1, colour = Protocol)) + 
+  geom_point(show.legend = TRUE, alpha=0.2) + 
+  ylab("Library size (UMIs)") + 
+  xlab("Genes detected") +
+  scale_y_continuous(trans='log10') + scale_x_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "bl") +
+  scale_colour_brewer(palette = "Dark2")
+
+plt4
+```
+
+## Summary
+
+```{r summary, fig.height=12, fig.width=16, fig.cap="Summary"}
+plt1 + plt2 + plt3 + plt4 + 
+  plot_layout(guides = 'collect')
+```
+
+# Barnyard plot {.tabset}
+
+This was a xenograft experiment. The removal of ambient RNA should reduce the counts that are on the diagonal.
+
+## All samples
+
+```{r barnyard_all}
+plt6 <- ggplot(tb, 
+             aes(x = sum+1, y= altexps_Mouse_sum+1, colour = Protocol)) + 
+  geom_point(show.legend = TRUE, alpha=0.2) + 
+  ylab("Mouse library size") + 
+  xlab("Human library size") +
+  xlim(0,15000) + ylim(0,1000) +
+  scale_colour_brewer(palette = "Dark2")
+
+plt6
+```
+
+## Facet sample
+
+```{r barnyard_facet, fig.height=12, fig.width=16}
+plt7 <- ggplot(tb, 
+             aes(x = sum+1, y= altexps_Mouse_sum+1)) + 
+  geom_point() +
+  ylab("Mouse library size") + 
+  xlab("Human library size") +
+  xlim(0,15000) + ylim(0,1000) +
+  facet_wrap(~Protocol)
+
+plt7
+```
+
+## Percent mouse counts
+
+```{r mouse_per, fig.cap="Mouse UMI percentage of total counts"}
+plt8  <- ggplot(tb, 
+             aes(x = Protocol, y= altexps_Mouse_percent, fill = Protocol)) + 
+  geom_violin(show.legend = FALSE) + 
+  ylab("Mitochondrial percentage") + 
+  xlab("") +
+  scale_y_continuous(breaks=seq(0,100,10)) +
+  scale_fill_brewer(palette = "Dark2")
+
+plt8
+```
+
+## Percent mouse counts cut axis 5%
+
+```{r mouse_per_5, fig.cap="Mouse UMI percentage of total counts"}
+plt9  <- ggplot(tb, 
+             aes(x = Protocol, y= altexps_Mouse_percent, fill = Protocol)) + 
+  geom_violin(show.legend = FALSE) + 
+  geom_jitter(width = 0.2, size=0.05, alpha=0.05) +
+  ylab("Mitochondrial percentage") + 
+  xlab("") +
+  ylim(0,5) +
+  scale_fill_brewer(palette = "Dark2")
+
+plt9
+```
+
+## Summary barnyard
+
+```{r summary_baarnyard, fig.height=12, fig.width=16, fig.cap="Summary"}
+plt6 + plt7 + plt8 + plt9 + 
+  plot_layout(guides = 'collect')
+```
+
+# Cell multiplexing specific metrics {.tabset}
+
+```{r}
+tb_multi <- read_csv(here::here(
+  "OvarianCarcinosarcoma/data/Matrices", "quality_control_multi.csv.gz"
+))
+
+tb_multi %>% 
+  select(-Sample)
+```
+
+## Multiplexing capture oligos
+
+```{r oligp_count_p, fig.cap="Library size of multiplexing capture sequencing"}
+plt4 <- ggplot(tb_multi, 
+             aes(x = Protocol, y= altexps_Multiplexing.Capture_sum+1, fill = Protocol)) + 
+  geom_violin(show.legend = FALSE) + 
+  ylab("Multiplexing oligo \ncounts (UMI)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Set2")
+
+plt4
+```
+
+## GEX UMIs versus multiplexing UMIs
+
+Check if GEX counts and oligo tag counts were anti-correlated.  
+
+```{r oligp_gex, fig.cap="Library size vs oligo tag counts"}
+plt5 <- ggplot(tb_multi, 
+             aes(x = (altexps_Multiplexing.Capture_sum+1), y=(sum+1), colour = Protocol)) + 
+  geom_point(size=0.5, alpha=0.75) + 
+  xlab("Multiplexing oligo \ncounts (UMI)") + 
+  ylab("Library Size (UMIs)") +
+  scale_y_continuous(trans='log10') +
+  scale_x_continuous(trans='log10') +
+  #geom_smooth(method = lm) +
+  annotation_logticks(base = 10, sides = "bl") +
+  scale_colour_brewer(palette = "Set2")
+
+plt5
+```
+
+# Reads in cells
+
+Read in the metrics summary. Becuase teh unlabelled capture was run with cellranger count I have to mung it manually
+
+```{r}
+head_path <- "/stornext/Projects/score/GenomicsRnD/DB/S000322/cellranger_outs"
+
+UTDDataPath <- "/stornext/Projects/score/GenomicsRnD/DB/S000331/cellranger_outs/G000225_PDX_UTD/outs/metrics_summary.csv"
+
+CMODataPath <- "/stornext/Projects/score/GenomicsRnD/DB/S000322/cellranger_outs/G000225_PDX_CMO/per_sample_outs/PDX105/metrics_summary.csv"
+
+NXTDataPath = '/stornext/Projects/score/GenomicsRnD/DB/S000322/cellranger_outs/G000225_PDX_NXT/per_sample_outs/PDX105/metrics_summary.csv'
+
+HTODataPath = '/stornext/Projects/score/GenomicsRnD/DB/S000322/cellranger_outs/G000225_PDX_HTO/per_sample_outs/PDX105/metrics_summary.csv'
+```
+
+Read in metrics files
+
+```{r}
+cmo_rin <- read_csv(CMODataPath) %>% 
+  filter(`Metric Name` == "Fraction reads in cell-associated barcodes") %>% 
+  filter(`Grouped By` == "Physical library ID")
+cmo_rin$Protocol <- "CellPlex"
+
+hto_rin <- read_csv(HTODataPath) %>% 
+  filter(`Metric Name` == "Fraction reads in cell-associated barcodes") %>% 
+  filter(`Grouped By` == "Physical library ID")
+hto_rin$Protocol <- "Hashtag Ab"
+
+nxt_rin <- read_csv(NXTDataPath) %>% 
+  filter(`Metric Name` == "Fraction reads in cell-associated barcodes") %>% 
+  filter(`Grouped By` == "Physical library ID")
+nxt_rin$Protocol <- "MULTI-Seq CMO"
+
+
+rin <- rbind(
+  cmo_rin,
+  hto_rin,
+  nxt_rin
+)
+```
+
+Add in the unlabelled capture metrics.
+
+In the file *unlabelled_nuclei_force_16kcell_web_summary.html* where I forced cell ranger to count only manually called cells in the count matrix I get reads in cells of 50.8%.
+
+```{r}
+new_row <- tibble(
+  Category = "Library",
+  `Library Type` = "Gene Expression",
+  `Grouped By` = "Physical library ID",
+  `Group Name` = "Unlabelled",
+  `Metric Name` = "Fraction reads in cell-associated barcodes",
+  `Metric Value` = "50.8%",
+  Protocol = "Unlabelled"
+)
+
+rin <- add_row(rin, .before = 1, new_row)
+rin$`Metric Value` <- gsub(pattern = "%", replacement = "", rin$`Metric Value`)
+rin$`Metric Value` <- as.double(rin$`Metric Value`)
+rin
+```
+
+Plot the reads in cells as a barchart.
+
+```{r reads_in_cells}
+plt1 <- ggplot(rin, 
+             aes(x = reorder(Protocol, -`Metric Value`), y= `Metric Value`, fill = Protocol)) + 
+  geom_bar(stat = "identity", show.legend = FALSE) + 
+  ylab("Reads in cells %") + 
+  xlab("") +
+  scale_y_continuous(breaks=seq(0,100,10)) +
+  scale_fill_brewer(palette = "Set1")
+
+plt1 + theme_Publication(base_size = 18)
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,268 @@
+---
+title: "Quality control and dimension reduction"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=1, 
+                      fig.path='./figures/qc_plots/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(patchwork)
+  library(scuttle)
+  library(scater)
+  library(scran)
+  library(PCAtools)
+  })
+
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication(base_size = 18))
+```
+
+# Aim
+
+The poor quality of the fixed nuclei from the Ovarian carcinosaroma PDX experiment prompted an attempt to fix intact fresh cells instead.
+
+2x PDX tumours split into pieces:
+
+Take 25mg from each tumour, mince into pieces and fix for "fix and chop" protocol
+To be dissociated with Scott lab enzymes after 4C storage
+Take the remainder and dissociate fresh tissue with Sccott lab enzymes 
+Collagenase, dispase, DNase
+Perform RBC lysis
+Fix 2 million cells
+The tumours fixed were:
+
+* PDX1264
+* PDX1233
+
+The time between fixing the tissue and fixing the dissociated cells was approximately 2 hours.
+The sample didn't dissociate fully after 20 min at 37C.
+He put the sample for 20 more min at 37C. c.f the fresh tissue takes ~45min.
+After 40min the fixed tissue still not dissociating. Anthony filtered with 100uM filter
+I resuspended in quenching buffer and added 10% v/v enhancer for 4C storage
+
+## Sample omission
+
+The sample hybridisated with probeset BC2 was low in cell number and very clumpy. Because the last time I ran PDX tumour fixed nuclei the 10x Genomics channel blocked - I omitted this sample.
+
+Therefore only PDX1233 has a matched fix/chop vs fixed dissociated cells
+
+## Capture issue
+
+Daniel Brown
+-
+Gery Ma of 10x Genomics came onsite to supervise the capture. I counted the pooled cell suspension to ~4,000 cells/uL in 500uL
+
+Targeted 28,000 cells to recover because the countess underestimated the count. After capture was short of GEM volume by ~5uL. There was excess gel bead volume ~40uL
+
+Gerry recommended to capture again with a reimbursed reaction. However had the same issue. Incubated both captures.
+
+More likely in my opinion to be the slight clumping which Gerry said was OK.
+
+## Low librrary concentrration
+
+* Capture 1 = 1.21ng/uL
+  + 6.84nM
+* Capture 2 = 1.5ng/uL
+  + 8.48nM
+
+# Load Data
+
+Generated in the **1A_buildSCE** notebook.
+
+```{r loadData}
+sce <- readRDS("/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/PDX/S000379_basic.sce.rds")
+sce_orig <- sce
+```
+
+# Identifying outliers by each metric
+
+In calling cells from empty droplets, we have already removed cells with very low library sizes or (by association) low numbers of expressed genes. Thus, further filtering on these metrics is not strictly necessary.
+
+Filtering on the mitochondrial proportion provides the most additional benefit in this situation and so we seek to identify droplets with unusually large mitochondrial proportions (i.e. outliers). Outlier thresholds are defined based on the median absolute deviation (MADs) from the median value of the metric across all cells
+
+```{r}
+mito_drop <- isOutlier(
+    metric = sce$subsets_Mito_percent, 
+    nmads = 3, type = "higher")
+```
+
+Measure how many cells dropped
+
+```{r outlier_detect}
+qc_df <- colData(sce)
+reasons <- as.matrix(perCellQCFilters(
+    x=qc_df, 
+    sub.fields=c("subsets_Mito_percent")))
+
+discard <- reasons
+discard <- discard[,4]
+
+sce <- sce[,!discard]
+
+
+colnames(reasons)
+colSums(reasons)
+```
+
+Summarise how many cells left.
+
+Not many cells have been dropped, 101 out of 1117 cells.  
+Only mitochondrial genes have caused genes to be dropped. I interpret this as the library size and gene detection rate is pretty tight.
+
+```{r}
+cell_drop_tb <- rbind(
+  cbind(length(colnames(sce_orig)), length(colnames(sce)))
+)
+
+colnames(cell_drop_tb) <- c("Before_Filter", "After_filter")
+cell_drop_tb
+```
+
+## Filtering out low-abundance genes
+
+Low-abundance genes are problematic as zero or near-zero counts do not contain much information for reliable statistical inference. These genes typically do not provide enough evidence to reject the null hypothesis during testing, yet they still increase the severity of the multiple testing correction. In addition, the discreteness of the counts may interfere with statistical procedures. Thus, low-abundance genes are often removed in many RNA-seq analysis pipelines before the application of downstream methods.
+
+Several metrics can be used to define low-abundance genes. The most obvious is the average count for each gene, computed across all cells in the data set. We typically observe a peak of moderately expressed genes following a plateau of lowly expressed genes.
+
+The distributions look the same between captures.
+
+```{r average_count_p}
+ave_counts <- calculateAverage(sce)
+to_keep <- ave_counts > 0
+sce <- sce[to_keep, ]
+
+hist(
+  x = log10(ave_counts), 
+  breaks = 100, 
+  main = "10x Genomics Flex", 
+  col = "grey",
+  xlab = expression(Log[10] ~ "average count"))
+```
+
+Subset the count matrices for genes that are not expressed. 1448 genes are removed. That still leaves 16634 genes.
+
+```{r filter_gene}
+# Summarise how many cells left
+gene_drop_tb <- rbind(
+  cbind(length(rownames(sce_orig)), length(rownames(sce)))
+)
+
+colnames(gene_drop_tb) <- c("Before_Filter", "After_filter")
+gene_drop_tb
+```
+
+# GEX Normalization
+
+## Using the deconvolution method to deal with zero counts
+
+We pool counts from many cells to increase the count size for accurate size factor estimation (A. T. Lun, Bach, and Marioni 2016). Pool-based size factors are then ‘deconvolved’ into cell-based factors for cell-specific normalization. This removes scaling biases associated with cell-specific differences in capture efficiency, sequencing depth and composition biases.
+
+```{r normalise}
+set.seed(666)
+
+clusters <- quickCluster(sce)
+sce <- computeSumFactors(sce, clusters = clusters, min.mean = 0.1)
+sce <- logNormCounts(sce)
+print(summary(sizeFactors(sce)))
+
+```
+
+# Selecting highly variable genes (HVGs)
+
+## Fit variance
+```{r var_genes_p}
+var_fit <- modelGeneVarByPoisson(sce)
+hvg <- getTopHVGs(var_fit, var.threshold = 0)
+```
+
+```{r}
+p1 <- plotExpression(object = sce, features = hvg[1:10])
+p1
+```
+
+# Dimension reduction {.tabset}
+
+## PCA
+
+```{r PCA}
+set.seed(666)
+
+sce <- denoisePCA(sce, var_fit, subset.row = hvg)
+```
+
+### Number of PCA dimensions to retain
+
+Based on these percent variance plots retain 15 PCA dimensions
+
+```{r}
+# Percentage of variance explained is tucked away in the attributes.
+percent.var <- attr(reducedDim(sce), "percentVar")
+
+plot(percent.var, xlab="PC", ylab="Variance explained (%)")
+```
+
+
+### Visualise PCA
+
+First dimension is library size. 2nd dimension is the sample of origin.
+
+```{r pca_plts, fig.asp=1}
+pca_plt <- plotReducedDim(sce, dimred="PCA", colour_by = "detected") + theme_Publication()
+pca_plt2 <- plotReducedDim(sce, dimred="PCA", colour_by = "Sample") + theme_Publication()
+
+pca_plt / pca_plt2
+```
+
+## Run UMAP
+
+There are only 5 principle components in the data
+
+```{r umap}
+set.seed(100)
+sce <- runUMAP(sce, dimred = "PCA", n_dimred=5)
+```
+
+### Visualise UMAP
+
+The samples are separated by preparation method and sample of origin.
+
+```{r umap_plts, fig.asp=1}
+umap_plt <- plotReducedDim(sce, dimred="UMAP", colour_by="detected") + theme_Publication()
+umap_plt2 <- plotReducedDim(sce, dimred="UMAP", colour_by="Sample") + theme_Publication()
+
+umap_plt / umap_plt2
+```
+
+# Save SCE object
+
+```{r saveSCEs}
+saveRDS(sce,
+  "/vast/scratch/users/brown.d/S000379/SCEs/S000379_dimred.sce.rds"
+)
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```
