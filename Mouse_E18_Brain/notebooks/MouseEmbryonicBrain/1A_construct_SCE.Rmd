@@ -1,0 +1,339 @@
+---
+title: "Construct SCE"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+library(scater)
+library(Seurat)
+library(tidyverse)
+library(DropletUtils)
+```
+
+# Aim
+I previous compared Total-Seq A hashtag, MULTI-Seq and CellPlex lipid on human PBMCs. All protocols worked pretty well but human PBMCs are the easiest sample to work with.
+
+## This sample
+Run a more challenging sample = Mouse embryonic brain
+
+Mouse E18.5 brain, 1 embryo split into 3 aliquots We took mouse #3, the largest one for this purpose
+
+## Protocols
+
+* MULTI-Seq LMO = Capture 1
+    + LMO
+* 10x Genomics CellPlex = Capture 2
+    + CMO
+* Custom Nextera CMO = Capture 3
+    + NXT
+
+# Load Data {.tabset}
+
+Find the paths to the cell ranger output
+
+```{r dataPaths}
+CMODataPath = here::here(
+  'data/NN265/cellranger_multi_out/R010_Mm_CMO/outs/multi/count/raw_feature_bc_matrix'
+)
+
+LMODataPath = here::here(
+  'data/NN265/cellranger_multi_out/R010_Mm_LMO/outs/multi/count/raw_feature_bc_matrix'
+)
+
+NXTDataPath = here::here(
+  'data/NN265/cellranger_multi_out/R010_Mm_NXT/outs/multi/count/raw_feature_bc_matrix'
+)
+```
+
+## CMO
+
+```{r cmo}
+cmoAnno <- read.csv(here::here(
+  "data/NN265/cellranger_multi_out/R010_Mm_CMO/outs/multi/multiplexing_analysis/", "assignment_confidence_table.csv"
+))
+# Keep only those cells called by cell ranger
+keep_cells <- cmoAnno$Barcodes
+
+cmoData <- read10xCounts(CMODataPath,version='3', col.names = T)
+cmoData <- cmoData[,keep_cells]
+
+cmoData$Protocol = "CellPlex"
+cmoData$mul_Assignment <- cmoAnno$Assignment
+cmoData$mul_Assignment_Probability <- cmoAnno$Assignment_Probability
+
+cmoData <- splitAltExps(
+  cmoData,
+  rowData(cmoData)$Type,
+  "Gene Expression")
+```
+
+## LMO
+
+```{r lmo}
+lmoAnno <- read.csv(here::here(
+  "data/NN265/cellranger_multi_out/R010_Mm_LMO/outs/multi/multiplexing_analysis/", "assignment_confidence_table.csv"
+))
+# Keep only those cells called by cell ranger
+keep_cells <- lmoAnno$Barcodes
+
+lmoData <- read10xCounts(LMODataPath,version='3', col.names = T)
+lmoData <- lmoData[,keep_cells]
+
+lmoData$Protocol = "MULTI-Seq LMO"
+lmoData$mul_Assignment <- lmoAnno$Assignment
+lmoData$mul_Assignment_Probability <- lmoAnno$Assignment_Probability
+
+lmoData <- splitAltExps(
+  lmoData,
+  rowData(lmoData)$Type,
+  "Gene Expression")
+```
+
+## NXT
+
+```{r loadData}
+nxtAnno <- read.csv(here::here(
+  "data/NN265/cellranger_multi_out/R010_Mm_NXT/outs/multi/multiplexing_analysis/", "assignment_confidence_table.csv"
+))
+# Keep only those cells called by cell ranger
+keep_cells <- nxtAnno$Barcodes
+
+nxtData <- read10xCounts(NXTDataPath,version='3', col.names = T)
+nxtData <- nxtData[,keep_cells]
+
+nxtData$Protocol = "MULTI-Seq CMO"
+nxtData$mul_Assignment <- nxtAnno$Assignment
+nxtData$mul_Assignment_Probability <- nxtAnno$Assignment_Probability
+
+nxtData <- splitAltExps(
+  nxtData,
+  rowData(nxtData)$Type,
+  "Gene Expression")
+```
+
+# Add gene IDs as row names
+
+``` {r rownames}
+row.names(cmoData) <- rowData(cmoData)$Symbol
+row.names(lmoData) <- rowData(lmoData)$Symbol
+row.names(nxtData) <- rowData(nxtData)$Symbol
+```
+
+# Quality control
+
+## Mitochondrial content
+
+```{r mito_qc}
+all.sce <- list(cmoData, lmoData, nxtData)
+names(all.sce) <- c("CMO", "LMO", "NXT")
+
+for (n in names(all.sce)) {
+    current <- all.sce[[n]]
+    mito_set <- grep("^mt-" ,row.names(current), value = T)
+    is_mito <- rownames(current) %in% mito_set
+    current <- scater::addPerCellQC(current, 
+                                    subsets = list(Mito = which(is_mito)
+                 ))
+    all.sce[[n]] <- current
+}
+
+cmoData <- all.sce[["CMO"]]
+lmoData <- all.sce[["LMO"]]
+nxtData <- all.sce[["NXT"]]
+```
+
+# Save SCE Objects
+
+Save the basic sce objects
+
+```{r saveSCEs}
+saveRDS(cmoData, file = here::here(
+  "data/NN265/SCEs", "cmo-basic.rds"
+  ))
+
+saveRDS(lmoData, here::here(
+  "data/NN265/SCEs", "lmo-basic.rds"
+  ))
+
+saveRDS(nxtData, here::here(
+  "data/NN265/SCEs", "nxt-basic.rds"
+  ))
+```
+
+## Save tag counts
+
+I need the oligo tag counts to run cellHashR.
+
+```{r savetagcounts, eval=F, include=F}
+write10xCounts(path = here::here(
+  "data/NN265/Matrices", "cmo_tag_counts"
+  ), x = counts(altExp(cmoData)))
+
+write10xCounts(path = here::here(
+  "data/NN265/Matrices", "lmo_tag_counts"
+  ), x = counts(altExp(lmoData)))
+
+write10xCounts(path = here::here(
+  "data/NN265/Matrices", "nxt_tag_counts"
+  ), x = counts(altExp(nxtData)))
+
+```
+
+# Attach cell hashR annotation
+
+This is generated in cellhashR notebook in my local Rstudio instance.  
+I cannot run cell hashR with Rstudio server.
+
+UP TTO HERE
+
+```{r chr_cmo}
+cmo_calls <- read_tsv(here::here(
+  "data/NN265/Matrices/cellHashR", "cmo_tag_callFile_cellHashR.txt"))
+
+col_data <- cbind(colData(cmoData),
+  cmo_calls)
+
+colData(cmoData) <- col_data
+```
+
+```{r chr_lmo}
+lmo_calls <- read_tsv(here::here(
+  "data/NN265/Matrices/cellHashR", "lmo_tag_callFile_cellHashR.txt"))
+
+col_data <- cbind(colData(lmoData),
+  lmo_calls)
+
+colData(lmoData) <- col_data
+```
+
+```{r chr_nxt}
+nxt_calls <- read_tsv(here::here(
+  "data/NN265/Matrices/cellHashR", "nxt_tag_callFile_cellHashR.txt"))
+
+col_data <- cbind(colData(nxtData),
+  nxt_calls)
+
+colData(nxtData) <- col_data
+```
+
+# Attach Seurat reference mapping labels
+
+I downloaded the data from 
+
+https://singlecell.broadinstitute.org/single_cell/study/SCP1290/molecular-logic-of-cellular-diversification-in-the-mammalian-cerebral-cortex#/
+
+and built a reference to map to with Seurat Mapping and annotating query datasets vignette.
+https://satijalab.org/seurat/articles/integration_mapping.html
+
+This is documented in the *_construct_SRT.Rmd* notebook.
+
+```{r}
+srt_list <- readRDS(file = here::here(
+  "data/NN265/SRTs", "annotated.srt.rds"
+))
+
+cmo <- srt_list[[1]]
+lmo <- srt_list[[2]]
+nxt <- srt_list[[3]]
+
+cmo_meta <- cmo[[]][c(12:15)]
+lmo_meta <- lmo[[]][c(12:15)]
+nxt_meta <- nxt[[]][c(12:15)]
+```
+
+Attach the seurat cell labels to SingleCellExperiment object
+
+```{r}
+cmo_coldata <- cbind(colData(cmoData), cmo_meta)
+lmo_coldata <- cbind(colData(lmoData), lmo_meta) 
+nxt_coldata <- cbind(colData(nxtData), nxt_meta) 
+
+colData(cmoData) <- cmo_coldata
+colData(lmoData) <- lmo_coldata
+colData(nxtData) <- nxt_coldata
+```
+
+# Attach demuxafy labels
+
+I ran demuxafy which is a wrapper script for multiple doublet detecting software based on gene expression alone. This is located in *scripts/demuxafy/demuxafy_*
+
+```{r}
+cmo_demuxafy <- read_tsv(here::here(
+  "data/demuxafy", "cellplex", "cellplex_demuxafy_calls.tsv"
+  ))
+
+col_data <- cbind(colData(cmoData),
+  cmo_demuxafy[,2])
+
+colData(cmoData) <- col_data
+```
+
+MULTI-Seq LMO
+
+```{r}
+lmo_demuxafy <- read_tsv(here::here(
+  "data/demuxafy", "multiseqLMO", "multiseqLMO_demuxafy_calls.tsv"
+  ))
+
+col_data <- cbind(colData(lmoData),
+  lmo_demuxafy[,2])
+
+colData(lmoData) <- col_data
+```
+
+MULTI-Seq CMO
+
+```{r}
+nxt_demuxafy <- read_tsv(here::here(
+  "data/demuxafy", "multiseqCMO", "multiseqCMO_demuxafy_calls.tsv"
+  ))
+
+col_data <- cbind(colData(nxtData),
+  nxt_demuxafy[,2])
+
+colData(nxtData) <- col_data
+```
+
+## Save Annotated SCE
+
+```{r saveAnnoSCEs}
+saveRDS(cmoData, file = here::here(
+  "data/NN265/SCEs", "cmo-anno.rds"
+  ))
+
+saveRDS(lmoData, here::here(
+  "data/NN265/SCEs", "lmo-anno.rds"
+  ))
+
+saveRDS(nxtData, here::here(
+  "data/NN265/SCEs", "nxt-anno.rds"
+  ))
+```
+
+## Where I save the data
+
+```{bash, eval=F}
+cp	/stornext/HPCScratch/home/brown.d/Projects/tenX_GEX/R010_mouseEmbryoBrain/data/NN265/SCEs/*.rds \
+    /stornext/Projects/score/Analyses/R010_multiplexing/SCEs/MouseEmbryo
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

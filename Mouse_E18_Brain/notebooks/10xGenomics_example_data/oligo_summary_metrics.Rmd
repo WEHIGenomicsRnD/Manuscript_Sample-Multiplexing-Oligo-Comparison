@@ -1,0 +1,155 @@
+---
+title: "Oligo metrics summary"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/oligoSummary/',
+                      warning=FALSE, message=FALSE,
+                      layout="l-body-outset")
+library(here)
+knitr::opts_knit$set(root.dir = here::here())
+library(tidyverse)
+library(knitr)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+
+Visualise summary metrics for multiplexing tag oligos. Us both the cell ranger multi and  cellhashR
+
+## Samples
+
+Run a more challenging sample = Mouse embryonic brain E18.5
+We took mouse #3, the largest one for this purpose
+
+## Protocols
+
+1. 10x Genomics CellPlex, 10x Genomics example data
+2. 10x Genomics CellPlex, In house data
+
+## Read in data from cellranger multi
+```{r readFiles}
+path_inHouse <- here::here(
+  "data/NN258/multi_out/R010_CMO_ME/outs/multi/multiplexing_analysis/tag_calls_summary.csv"
+)
+
+path_tenX <- here::here(
+  "data/10xGenomicsExample/SC3_v3_NextGem_DI_CellPlex_Neurons_30K_Multiplex_multiplexing_analysis_tag_calls_summary.csv"
+)
+
+in_house_tagCall = read.table(path_inHouse, header = TRUE,sep=",")
+tenX_tagCall = read.table(path_tenX, header = TRUE,sep=",")
+```
+
+# Build sample metadata
+
+```{r}
+in_house_tagCall$Protocol <- "In house"
+tenX_tagCall$Protocol <- "10x Genomics"
+
+combined <- as.data.frame(rbind(
+  in_house_tagCall[c(1:16),],
+  tenX_tagCall[c(1:16),]))
+```
+
+```{r}
+tb <- as_tibble(combined)
+
+tb$Category <- recode(tb$Category,
+                      `No tag assigned` = "unassigned",
+                      `1 tag assigned` = 'singlet',
+                      `More than 1 tag assigned` = "multiplet"
+)
+                      
+tb_orig <- tb
+tb %>% 
+  select(Category:pct_cells,Protocol) %>% 
+  head(5) %>% 
+  kable()
+```
+
+The category No tag assigned includes both cells that were considered Blanks and cells considered Unassigned.
+
+The fraction of cells that should be part of each multiplexing tag is:
+
+* `r round(1/12 * 100, 2)` %
+
+## Make some plots {.tabset}
+
+### By Label
+
+I think this is driven by sequencing depth. For in house its around 1,000 reads per cell for CellPlex.  
+Need to check the oligo tag sequencing depth for 10x Genomics example data.
+
+```{r Label}
+plt1 <- ggplot(data=tb[!tb$Category == c("No tag molecules", "unassigned", "singlet", "multiplet"),], 
+               aes(label=Category,
+                            y=pct_cells, x=Protocol, colour=Protocol)) +
+  geom_jitter(size=2, width = 0.225, alpha=1) +
+  geom_text(alpha=0) + ylim(0,8) +
+  scale_colour_brewer(type="qualitative", palette = "Dark2") +
+  xlab("Cell Ranger Multi Label") + ylab("Percent of capture")
+
+plt1
+```
+
+# Plot the singlet ratio
+
+The doublet ratio of CellPlex is a bit above 20%.  
+The outcomes of the NXT and LMO are quite poor.
+
+```{r}
+tb_sr <- tb[tb$Category %in% c("No tag molecules", "unassigned", "singlet", "multiplet"),]
+```
+
+Annoyingly in this summary blanks and unassigned are rolled into the same category.
+
+```{r singlet_unassigned}
+plt2 <- ggplot(data=tb_sr,
+               aes(y=pct_cells, x=Protocol, fill=Category)) +
+  geom_bar(position = position_stack(reverse = TRUE),
+           stat="identity") +
+  xlab("") + ylab("Percent of capture") +
+  scale_y_continuous(breaks=seq(0,100,20)) +
+  scale_fill_brewer(palette = "Dark2", name = "Demultiplexing \n classification")
+
+plt2
+```
+
+# Conclusion
+
+Its a minimal difference for the cost saving of diluting CellPlex and performing much less sequencing.
+The reads per cell for oligo tag is not on the 10x Genomics website so I can only assume 5,000 reads per cell.
+
+The metrics summary file needed to get the signal to noise is not on the 10x Genomics dataset website.
+
+## Session info
+```{r sessionInfo}
+write_csv(tb, here::here(
+  "data/10xGenomicsExample/Matrices", "multiplexing_summary_stats.csv"
+))
+
+```
+
+```{r}
+sessionInfo()
+```

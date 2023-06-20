@@ -1,0 +1,557 @@
+---
+title: "Oligo tag performance"
+author: "Daniel Brown"
+description: "Investigate the unassigned, doublet and multiplet calls"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/visualise_qc/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = here::here())
+library(scater)
+library(patchwork)
+library(knitr)
+library(tidyverse)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+I previous compared Total-Seq A hashtag, MULTI-Seq and CellPlex lipid on human PBMCs. All protocols worked pretty well but human PBMCs are the easiest sample to work with.
+
+The aim of this notebook is to investigate umi and gene detected for the droplet calls of:
+
+* Cell ranger multi
+* BFF cluster
+* demuxafy, majority vote of 
+    + DoubletFinder
+    + scDblFinder
+    + scds
+    + scrublet
+
+## This sample
+Run a more challenging sample = Mouse embryonic brain.
+
+Mouse E18.5 brain, 1 embryo split into 3 aliquots We took mouse #3, the largest one for this purpose
+
+## Protocols
+
+* MULTI-Seq LMO = Capture 1
+    + LMO
+* 10x Genomics CellPlex = Capture 2
+    + CMO
+* Custom Nextera CMO = Capture 3
+    + NXT
+## Load Data
+
+These SingleCellExperiment objects were generated in 1A_construct_SCE.Rmd notebook
+
+```{r loadData}
+sce_list <- readRDS(here::here(
+  "Mouse_E18_Brain/data/SCEs/MouseEmbryo", "clustered.sceList.rds"
+))
+names(sce_list)
+```
+
+## Explain cell metadata
+
+* Protocol
+  + The cell multiplexing protocol I used. See protocols section above.
+* mul_Assignment
+  + The demultiplexing label emitted by cell ranger multi algorithm
+  + Blanks means too few counts detected for that cell
+  + Unassigned means signal to noise too low for assignment
+* mul_Assignment_Probability
+  + demultiplexinng probability emitted by cell ranger multi
+* sum
+  + Library size of gene expression (umi counts) per cell
+* detected
+  + Number of genes detected
+* subsets_Mito_percent
+  + Percent mitochondrial umi counts per cell
+* altexps_Multiplexing Capture_sum
+  + Library size of multiplexing oligo tags per cell
+* bff_cluster : dropletutils
+  + CellhashR https://bimberlab.github.io/cellhashR/ demultiplexing calls per cell
+  + CellhashR runs many common demultiplexing algorithms
+* consensuscall
+  + The agreed demultiplexing call for the demultiplexing algorithms
+  + Note this does not include cell ranger multi which is not included in cellhashR
+
+## Add additional cell metadata
+
+Code in singlets and doublets for both cell rnager multi and bff cluster.
+
+```{r}
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  current$multi_droplet <- "singlet"
+  current$multi_droplet[current$mul_Assignment == "Multiplet"] <- "multiplet"
+  current$multi_droplet[current$mul_Assignment == "Unassigned"] <- "unassigned"
+  current$bff_droplet <- "singlet"
+  current$bff_droplet[current$bff_cluster == "Doublet"] <- "multiplet"
+  current$bff_droplet[current$bff_cluster == "Negative"] <- "unassigned"
+  # Recode doublet to multiplet
+  current$Demuxafy_assignment[current$Demuxafy_assignment == "doublet"] <- "multiplet"
+  sce_list[[n]] <- current
+}
+```
+
+# Visualizing the QC metrics based on Cell ranger Multi {.tabset}
+
+```{r}
+tb <- as_tibble(
+  rbind(
+  colData(sce_list[[1]]),
+  colData(sce_list[[2]]),
+  colData(sce_list[[3]])
+))
+
+write_csv(tb, here::here(
+  "Mouse_E18_Brain/data/Matrices", "gex_summary_stats.csv.gz"
+))
+```
+
+Number of cells from each protocol
+
+I was aiming for 20,000 singlets. When I cross check these values against DropletUtils the number of retrieved cells looks correct.  
+The number of cells captured is ranked by the order cells were sorted by FACS. Each sample took 20min.
+
+```{r}
+tb %>% 
+  dplyr::count(Protocol) %>% 
+  kable()
+```
+
+## Cellranger multi call
+
+Summary of captures by cell ranger call and protocol.  
+Theoretical multiplet rate should be 16.3%.
+
+```{r}
+cr_summary <- tb %>% 
+  dplyr::count(Protocol, multi_droplet) %>% 
+  group_by(Protocol) %>% 
+  mutate(pct = round(n/sum(n)*100, digits = 1)) %>% 
+  select(-n)
+
+cr_summary %>% 
+  pivot_wider(names_from = multi_droplet, values_from = pct) %>% 
+  kable()
+```
+
+## BFF cluster call
+
+Summary of captures by BFF_cluster call and protocol.  
+Theoretical multiplet rate should be 16.3%.
+
+```{r}
+bff_summary <- tb %>% 
+  dplyr::count(Protocol, bff_droplet) %>% 
+  group_by(Protocol) %>% 
+  mutate(pct = round(n/sum(n)*100, digits = 1)) %>% 
+  select(-n) 
+
+bff_summary %>% 
+  pivot_wider(names_from = bff_droplet, values_from = pct) %>% 
+  kable()
+
+colnames(cr_summary) <- c("Protocol", "Droplet_Call", "Percent")
+cr_summary$Algorithm <- "Cellranger multi"
+colnames(bff_summary) <- c("Protocol", "Droplet_Call", "Percent")
+bff_summary$Algorithm <- "BFF Cluster"
+
+summary_stats <- rbind(cr_summary, bff_summary)
+summary_stats$Droplet_Call <- as_factor(summary_stats$Droplet_Call)
+
+summary_stats$Droplet_Call <- forcats::fct_rev(summary_stats$Droplet_Call)
+
+levels(summary_stats$Droplet_Call)
+```
+
+Visualise the percent calls
+
+```{r capture_percent_algorithm}
+ggplot(summary_stats, 
+             aes(x = Protocol, y= Percent, fill = Droplet_Call)) + 
+  geom_bar(position="stack", stat="identity") +
+  ylab("Percent of capture") + 
+  xlab("") + 
+  scale_fill_manual(name = "Droplet Call", 
+                    values=c(multiplet="#E69F00", singlet="#56B4E9", unassigned="#999999")) +
+  facet_wrap(~Algorithm)
+
+```
+
+## Demuxafy vote call
+
+Summary of captures by demuxafy vote winner call and protocol.  
+Theoretical multiplet rate should be 16.3%.
+
+```{r}
+tb %>% 
+  dplyr::count(Protocol, Demuxafy_assignment) %>% 
+  group_by(Protocol) %>% 
+  mutate(pct = round(n/sum(n)*100, digits = 1)) %>% 
+  select(-n) %>% 
+  pivot_wider(names_from = Demuxafy_assignment, values_from = pct) %>% 
+  kable()
+```
+
+# Visualise umi and gene detected metrics by droplet call {.tabset}
+
+## Library size
+
+I suspect the distribution is related to the mean reads per cell:
+
+* CellPlex 14,046
+* MULTI-Seq CMO 7,010
+* MULTI-Seq LMO 14,540
+
+I sequenced CellPlex a lot more for the Jumpcode CRISPRclean study. LMO has few cells retained. I think the unimodal distribution is related to too few reads per cell for MULTI-Seq CMO (=NXT)
+
+The oligo tag counts are OK based on my prior PBMC study:
+
+* Between 1,000 and 1,500 reads per cell.
+
+There is no obvious difference in RNA library size for singlet and unassigned. I conclude a signal to noise issue is causing the unassigned.
+
+```{r}
+droplet_tb <- tb %>% 
+  select(Barcode, Protocol,sum:altexps_Multiplexing.Capture_percent,Demuxafy_assignment,cluster:bff_droplet) %>% 
+  pivot_longer(
+    cols = c(Demuxafy_assignment:bff_droplet),
+    names_to = "Algorithm",
+    values_to = "DropletCall",)
+```
+
+```{r libSize_fAlgorithm, fig.cap="Library size in deduplicated UMIs"}
+plt1 <- ggplot(droplet_tb, 
+             aes(x = DropletCall, y= sum+1, fill = Algorithm)) + 
+  geom_violin(show.legend = T) + 
+  ylab("Library Size (UMIs)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Dark2") +
+  facet_wrap(~Protocol)
+
+plt1
+```
+
+```{r libSize_fDropletCall, fig.cap="Library size in deduplicated UMIs", fig.height=6,fig.width=10}
+plt1 <- ggplot(droplet_tb, 
+             aes(x = Algorithm, y= sum+1, fill = DropletCall)) + 
+  geom_violin(show.legend = T) + 
+  ylab("Library Size (UMIs)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Set2", aesthetics = c("Multiplet", "Singlet", "Unassigned")) +
+  facet_wrap(~Protocol)
+
+plt1
+```
+
+## Detected genes
+
+Much the same library size in UMIs.
+
+```{r detected_genes_p, fig.cap="Number of detected genes", fig.height=6,fig.width=10}
+plt2 <- ggplot(droplet_tb, 
+             aes(x = Algorithm, y= detected, fill = DropletCall)) + 
+  geom_violin(show.legend = T) + 
+  ylab("Genes detected") + 
+  xlab("") +
+  scale_fill_brewer(palette = "Set2", aesthetics = c("Multiplet", "Singlet", "Unassigned")) +
+  facet_wrap(~Protocol)
+
+plt2
+```
+
+## Mitochondrial percentage
+
+CellPlex and MULTI-Seq LMO very curious doublets have lower mitochondrial percent. Maybe caused by highly expressed genes dominating more in multiplets.
+
+Mito percent higher in MULTI-Seq LMO not surprising this was left psot sorting the longest amount of time.  
+MULTI-Seq CMO suprising as this was intermediate time after sorting, maybe sequencing depth related.
+
+```{r mito_per_p, fig.cap="Mitochondrial percentage of total counts", fig.height=6,fig.width=10}
+plt3 <- ggplot(droplet_tb, 
+             aes(x = Algorithm, y= subsets_Mito_percent, fill = DropletCall)) + 
+  geom_violin(show.legend = T) + 
+  ylab("Mitochondrial percentage") + 
+  xlab("") +
+  scale_fill_brewer(palette = "Set2", aesthetics = c("Multiplet", "Singlet", "Unassigned")) +
+  facet_wrap(~Protocol)
+
+plt3
+```
+
+## Multiplexing capture oligos
+
+No clear difference in unassigned and singlets except for LMO.
+
+```{r oligp_count_p, fig.cap="Library size of multiplexing capture sequencing", fig.height=6,fig.width=10}
+plt4 <- ggplot(droplet_tb, 
+             aes(x = DropletCall, y= altexps_Multiplexing.Capture_sum+1, fill = Algorithm)) + 
+  geom_violin(show.legend = T) + 
+  ylab("Library Size (UMIs)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Dark2") +
+  facet_wrap(~Protocol)
+
+plt4
+```
+
+## Put together
+
+```{r qc_summary_p, fig.cap="Summary of QC metrics", fig.width=12, fig.height=8}
+plt1 + plt2 + plt3 + plt4 + 
+  plot_layout(guides = "collect", ncol = 2)
+```
+
+# Plot library size by dual cell ranger multi and demuxafy label
+
+## BFF cluster
+
+About the best visualization I can achieve in the absence of ground truth for genetic identical mouse embryo is to compare doublet calls from gene expression and oligo tag demultiplexing algorithm.
+
+```{r mung_doublet_bff}
+dob_tb <- tb %>% 
+  select(Barcode,sum,detected,subsets_Mito_percent,Protocol,Demuxafy_assignment:bff_droplet)
+
+# Combine columns and recode
+dob_tb$class <- paste("bff",dob_tb$bff_droplet,
+                      "gex", dob_tb$Demuxafy_assignment,
+                      sep="-")
+
+# remove unassigned for clarity of plotting
+dob_tb <- dob_tb %>% 
+  filter(bff_droplet != "unassigned") %>% 
+  filter(Demuxafy_assignment != "unassigned")
+```
+
+Violin style
+
+```{r libSize_bff, fig.cap="Library size in deduplicated UMIs"}
+unique(dob_tb$class)
+
+p1 <- ggplot(dob_tb, 
+             aes(x = class, y= sum+1, fill = class)) + 
+  geom_violin(show.legend = FALSE) + 
+  ylab("Library Size (UMIs)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  scale_x_discrete(labels=c("bff-singlet-gex-singlet" = "S\n\nS", 
+                            "bff-multiplet-gex-singlet" = "M\n\nS",
+                            "bff-multiplet-gex-multiplet" = "M\n\nM",
+                            "bff-singlet-gex-multiplet" = "S\n\nM")) +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size=14)) +
+  facet_wrap(~Protocol)
+
+p1
+```
+
+Summarise number of cells in each class
+
+```{r}
+dob_tb %>% 
+  dplyr::count(class,Protocol) %>% 
+  pivot_wider(names_from = Protocol, values_from = n) %>% 
+  kable()
+```
+
+Mitochondrial percentage.  
+Not much difference here
+
+```{r mito_bff, fig.cap="Library size in deduplicated UMIs"}
+unique(dob_tb$class)
+
+p2 <- ggplot(dob_tb, 
+             aes(x = class, y= subsets_Mito_percent, fill = class)) + 
+  geom_violin(show.legend = FALSE) + 
+  ylab("Mitochondrial Percent") + 
+  xlab("") +
+  scale_x_discrete(labels=c("bff-singlet-gex-singlet" = "S\n\nS", 
+                            "bff-multiplet-gex-singlet" = "M\n\nS",
+                            "bff-multiplet-gex-multiplet" = "M\n\nM",
+                            "bff-singlet-gex-multiplet" = "S\n\nM")) +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size=14)) +
+  facet_wrap(~Protocol)
+
+p2
+```
+
+## Cell ranger multi
+
+```{r mung_doublet_cr}
+dob_tb <- tb %>% 
+  select(Barcode,sum,detected,subsets_Mito_percent,Protocol,Demuxafy_assignment:bff_droplet)
+
+# Combine columns and recode
+dob_tb$class <- paste("cr",dob_tb$multi_droplet,
+                      "gex", dob_tb$Demuxafy_assignment,
+                      sep="-")
+
+# remove unassigned for clarity of plotting
+dob_tb <- dob_tb %>% 
+  filter(multi_droplet != "unassigned") %>% 
+  filter(Demuxafy_assignment != "unassigned")
+```
+
+Violin style
+
+```{r libSize_cr, fig.cap="Library size in deduplicated UMIs"}
+unique(dob_tb$class)
+
+p3 <- ggplot(dob_tb, 
+             aes(x = class, y= sum+1, fill = class)) + 
+  geom_violin(show.legend = FALSE) + 
+  ylab("Library Size (UMIs)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  scale_x_discrete(labels=c("cr-singlet-gex-singlet" = "S\n\nS", 
+                            "cr-multiplet-gex-singlet" = "M\n\nS",
+                            "cr-multiplet-gex-multiplet" = "M\n\nM",
+                            "cr-singlet-gex-multiplet" = "S\n\nM")) +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size=14)) +
+  facet_wrap(~Protocol)
+
+p3
+```
+
+Summarise number of cells in each class
+
+```{r}
+dob_tb %>% 
+  dplyr::count(class,Protocol) %>% 
+  pivot_wider(names_from = Protocol, values_from = n) %>% 
+  kable()
+```
+
+Mitochondrial percentage.  
+Not much difference here
+
+```{r mito_cr, fig.cap="Library size in deduplicated UMIs"}
+unique(dob_tb$class)
+
+p4 <- ggplot(dob_tb, 
+             aes(x = class, y= subsets_Mito_percent, fill = class)) + 
+  geom_violin(show.legend = FALSE) + 
+  ylab("Mitochondrial Percent") + 
+  xlab("") +
+  scale_x_discrete(labels=c("cr-singlet-gex-singlet" = "S\n\nS", 
+                            "cr-multiplet-gex-singlet" = "M\n\nS",
+                            "cr-multiplet-gex-multiplet" = "M\n\nM",
+                            "cr-singlet-gex-multiplet" = "S\n\nM")) +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size=14)) +
+  facet_wrap(~Protocol)
+
+p4
+```
+
+## Cell Ranger multi vs BFF Cluster same plot
+
+This is hard to interpret due to bimodal distribution of the singlets.
+
+```{r mung_doublet_both}
+dob_tb <- tb %>% 
+  select(Barcode,sum,detected,Protocol,Demuxafy_assignment:bff_droplet)
+
+# Combine columns and recode
+dob_tb$class <- paste("cr",dob_tb$multi_droplet,
+                      "bff", dob_tb$bff_droplet,
+                      sep="-")
+
+# remove where unassigned for clarity of plotting
+dob_tb <- dob_tb %>% 
+  filter(class != "cr-unassigned-bff-unassigned") %>% 
+  filter(class != "cr-unassigned-bff-multiplet")
+
+```
+
+Violin style
+
+```{r libSize_both, fig.cap="Library size in deduplicated UMIs"}
+unique(dob_tb$class)
+
+p3 <- ggplot(dob_tb, 
+             aes(x = class, y= sum+1, fill = class)) + 
+  geom_violin(show.legend = FALSE) + 
+  ylab("Library Size (UMIs)") + 
+  xlab("") +
+  scale_y_continuous(trans='log10') +
+  scale_x_discrete(labels=c("cr-multiplet-bff-multiplet" = "M\n\nM",
+                            "cr-multiplet-bff-singlet" = "M\n\nS", 
+                            "cr-singlet-bff-multiplet" = "S\n\nM",
+                            "cr-singlet-bff-unassigned" = "S\n\nU",
+                            "cr-unassigned-bff-singlet" = "U\n\nS",
+                            "cr-unassigned-bff-multiplet" = "U\n\nM",
+                            "cr-singlet-bff-singlet" = "S\n\nS")) +
+  annotation_logticks(base = 10, sides = "l") +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size=14)) +
+  facet_wrap(~Protocol)
+
+p3
+```
+
+Summarise number of cells in each class
+
+```{r}
+dob_tb %>% 
+  dplyr::count(class,Protocol) %>% 
+  pivot_wider(names_from = Protocol, values_from = n) %>% 
+  kable()
+```
+
+## Combine the violin charts of demuxafy and oligo tag demultiplexing algorithm
+
+```{r combine_gex_oligo, fig.width=8, fig.height=12}
+p1 + p2 + p3 + p4
+```
+
+# Conclusion
+
+Cell ranger multi looks more trust worthy here. Maybe BFF Cluster is better for CellPlex.
+
+## Next steps
+
+* Remove low quality cells and genes that are not expressed
+* Select highly variable genes and dimension rreduction
+* Annotate cells
+* Relate annotations to demultiplexing annotations
+  + Cells that are false negative doublets
+  + If unassigned cells are enriched for a certain cell type
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

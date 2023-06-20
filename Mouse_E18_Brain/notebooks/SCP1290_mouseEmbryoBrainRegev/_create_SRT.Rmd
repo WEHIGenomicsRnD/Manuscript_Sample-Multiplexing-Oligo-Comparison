@@ -1,0 +1,189 @@
+---
+title: "Create Seurat object"
+author: "Daniel Brown"
+description: "Quality control and normalise"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/create_SRT/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = here::here())
+library(Seurat)
+library(here)
+library(knitr)
+library(tidyverse)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+
+I downloaded the data from 
+
+# https://singlecell.broadinstitute.org/single_cell/study/SCP1290/molecular-logic-of-cellular-diversification-in-the-mammalian-cerebral-cortex#/
+
+To build a reference to map to with Seurat Mapping and annotating query datasets vignette.
+https://satijalab.org/seurat/articles/integration_mapping.html
+
+# Read data
+
+## Metadata
+
+```{r}
+meta <- read_tsv(here::here(
+  "data/SCP1290_mouseEmbryoBrainRegev", "metaData_scDevSC.txt"
+))
+
+meta <- meta[c(2:98048),]
+
+umap <- read.delim(here::here(
+  "data/SCP1290_mouseEmbryoBrainRegev", "cluster_scDevSC.merged.umap.txt"
+))
+umap <- umap[c(2:98048),]
+
+tsne <- read_tsv(here::here(
+  "data/SCP1290_mouseEmbryoBrainRegev", "cluster_scDevSC.merged.tsne.txt"
+))
+tsne <- tsne[c(2:98048),]
+```
+
+Filter the metadata for E18 cells which is the same timepoint as my study.
+
+```{r}
+keep_cells <- grepl("^E18", meta$NAME)
+
+meta <- meta[keep_cells,]
+umap <- umap[keep_cells,]
+tsne <- tsne[keep_cells,]
+```
+
+meta object needs recoded for column count write to disk and re read.
+
+```{r}
+write_csv(meta, here::here(
+  "data/SCP1290_mouseEmbryoBrainRegev", "metaData_scDevSC.csv.gz"
+))
+
+meta <- read_csv(here::here(
+  "data/SCP1290_mouseEmbryoBrainRegev", "metaData_scDevSC.csv.gz"
+))
+meta <- as.data.frame(meta)
+row.names(meta) <- meta$NAME
+```
+
+
+## Seurat object
+
+```{r loadData}
+counts <- Read10X(here::here(
+  "data/SCP1290_mouseEmbryoBrainRegev"))
+
+counts_filter <- counts[,keep_cells]
+
+dim(counts_filter)
+```
+
+This object contains all the cells whereas I need only cells from E18.5 embryo.
+
+```{r}
+srt <- CreateSeuratObject(
+  counts = counts_filter, 
+  project = "SCP1290",
+  meta.data = meta
+)
+```
+
+# Examine the metadata fields
+
+The broad cell type labels
+
+```{r}
+unique(srt$Gral_cellType)
+```
+
+The finer labels
+
+```{r}
+unique(srt$New_cellType)
+```
+
+# Add the UMAP coordinates
+
+Need to mung the umap into a dimred object.
+
+```{r}
+umap$X <- as.double(umap$X)
+umap$Y <- as.double(umap$Y)
+row.names(umap) <- umap$NAME
+umap <- umap[,c(2,3)]
+umap <- as.matrix(umap)
+colnames(umap) <- c("umap_pub1", "umap_pub2")
+
+umap1 <- umap[colnames(srt),]
+
+umap1 <- CreateDimReducObject(embeddings = umap1, key = "umap_pub")
+srt[["umap_pub"]] <- umap1
+```
+
+## Filter seurat object
+
+Remove doublets
+
+```{r}
+srt <- srt[,!srt$Doublet_intersect == "Doublet"]
+
+DimPlot(object = srt, reduction = "umap", group.by = "Gral_cellType")
+```
+
+## Normalise
+
+```{r}
+srt <- SCTransform(srt, verbose = TRUE)
+```
+
+Perform dimensionality reduction by PCA and UMAP embedding
+
+```{r}
+srt <- RunPCA(srt, verbose = T)
+srt <- RunUMAP(srt, dims = 1:30, verbose = T)
+
+srt <- FindNeighbors(srt, dims = 1:30, verbose = T)
+srt <- FindClusters(srt, verbose = T)
+
+p1 <- DimPlot(srt, label = TRUE, group.by = "Gral_cellType", reduction = "umap") + NoLegend()
+p2 <- DimPlot(srt, label = TRUE, group.by = "Gral_cellType", reduction = "umap_pub") + NoLegend()
+
+p1 + p2
+```
+
+# Save object
+
+```{r}
+saveRDS(srt, here::here(
+  "data/SCP1290_mouseEmbryoBrainRegev", "SCP1290_mouseEmbryo.srt.rds"
+))
+```
+
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

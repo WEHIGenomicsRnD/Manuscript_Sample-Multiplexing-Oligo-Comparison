@@ -1,0 +1,30 @@
+[gene-expression],,
+reference,/stornext/Projects/score/Indexes/refdata-gex-mm10-2020-A
+cmo-set,/stornext/HPCScratch/home/brown.d/Projects/tenX_GEX/R010_multiplexing/metadata/NN258/references/CMO_Feature_Ref.csv
+expect-cells,20000
+,,
+[libraries],,
+fastq_id,fastqs,feature_types
+R010_CMO_GEX-1,/stornext/Projects/score/GenomicsRnD/DB/NN263/fastq,Gene Expression
+R010_CMO_GEX-2,/stornext/Projects/score/GenomicsRnD/DB/NN263/fastq,Gene Expression
+R010_CMO_GEX-3,/stornext/Projects/score/GenomicsRnD/DB/NN263/fastq,Gene Expression
+R010_CMO_GEX-4,/stornext/Projects/score/GenomicsRnD/DB/NN263/fastq,Gene Expression
+R010_CMO_CMO-1,/stornext/HPCScratch/home/brown.d/Projects/tenX_GEX/R010_multiplexing/data/NN258/fastq,Multiplexing Capture
+R010_CMO_CMO-2,/stornext/HPCScratch/home/brown.d/Projects/tenX_GEX/R010_multiplexing/data/NN258/fastq,Multiplexing Capture
+R010_CMO_CMO-3,/stornext/HPCScratch/home/brown.d/Projects/tenX_GEX/R010_multiplexing/data/NN258/fastq,Multiplexing Capture
+R010_CMO_CMO-4,/stornext/HPCScratch/home/brown.d/Projects/tenX_GEX/R010_multiplexing/data/NN258/fastq,Multiplexing Capture
+,,
+[samples],,
+sample_id,cmo_ids,
+Lox-brain-1,CMO301
+Lox-brain-2,CMO302
+Lox-brain-3,CMO303
+Lox-brain-4,CMO304
+Lox-brain-5,CMO305
+Lox-brain-6,CMO306
+Lox-brain-7,CMO307
+Lox-brain-8,CMO308
+Lox-brain-9,CMO309
+Lox-brain-10,CMO310
+Lox-brain-11,CMO311
+Lox-brain-12,CMO312
