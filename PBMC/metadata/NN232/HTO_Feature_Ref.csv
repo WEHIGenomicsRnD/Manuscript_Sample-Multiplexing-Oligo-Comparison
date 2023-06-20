@@ -1,0 +1,12 @@
+﻿id,name,read,pattern,sequence,feature_type
+Human_HTO_1,Human_1,R2,5P(BC),GTCAACTCTTTAGCG,Multiplexing Capture
+Human_HTO_2,Human_2,R2,5P(BC),TGATGGCCTATTGGG,Multiplexing Capture
+Human_HTO_3,Human_3,R2,5P(BC),TTCCGCCTCTCTTTG,Multiplexing Capture
+Human_HTO_4,Human_4,R2,5P(BC),AGTAAGTTCAGCGTA,Multiplexing Capture
+Human_HTO_5,Human_5,R2,5P(BC),AAGTATCGTTTCGCA,Multiplexing Capture
+Human_HTO_6,Human_6,R2,5P(BC),GGTTGCCAGATGTCA,Multiplexing Capture
+Human_HTO_7,Human_7,R2,5P(BC),TGTCTTTCCTGCCAG,Multiplexing Capture
+Human_HTO_8,Human_8,R2,5P(BC),CTCCTCTGCAATTAC,Multiplexing Capture
+Human_HTO_9,Human_9,R2,5P(BC),CAGTAGTCACGGTCA,Multiplexing Capture
+Human_HTO_10,Human_10,R2,5P(BC),ATTGACCCGCGTTAG,Multiplexing Capture
+Human_HTO_12,Human_12,R2,5P(BC),TAACGACCAGCCATA,Multiplexing Capture

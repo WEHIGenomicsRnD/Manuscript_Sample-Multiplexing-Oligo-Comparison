@@ -1,0 +1,360 @@
+---
+title: "Oligo metrics summary"
+author: "Patrick Grave and Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='../figures/oligo_tag_performance/',
+                      warning=FALSE, message=FALSE,
+                      layout="l-body-outset")
+library(here)
+knitr::opts_knit$set(root.dir = here::here())
+library(tidyverse)
+library(knitr)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Recap
+The purpose of this experiment was to compare the performance of 3 different cell multiplexing reagents in PBMCs.  
+To obtain the ground truth of performance, the genotypes may be used to demultiplex donors.
+In this experiment there are 4 donors. The cell multiplexing was done in technical duplicate.  
+
+# Aim
+
+Plot summary statistics for Cell multiplexing oligos
+
+## Compare:
+
+Reagents
+1. Total-Seq A hashtag
+2. MULTI-seq LMO
+3. CellPlex reagent
+
+Donors
+1. VBDR1233
+2. VBDR1206
+3. VBDR1186
+4. VBDR1216
+
+## Read in data from cellranger multi
+```{r readFilesm, eval=FALSE}
+HTO_file_path = here::here(
+  "PBMC/data/NN239/NN239/R010_HTO_multi/outs/multi/multiplexing_analysis/tag_calls_summary.csv"
+)
+
+CMO_file_path = here::here(
+  "PBMC/data/NN239/NN239/R010_CMO_multi/outs/multi/multiplexing_analysis/tag_calls_summary.csv"
+)
+
+LMO_file_path = here::here("PBMC/data/NN239/NN239/R010_LMO_multi/outs/multi/multiplexing_analysis/tag_calls_summary.csv"
+)
+
+HTO_data = read.table(HTO_file_path, header = TRUE,sep=",")
+CMO_data = read.table(CMO_file_path, header = TRUE,sep=",")
+LMO_data = read.table(LMO_file_path, header = TRUE,sep=",")
+```
+
+# Build sample metadata
+
+Daniel wrote the metadata file himself
+
+```{r, eval=FALSE}
+metadataFile = here::here("PBMC/metadata/NN232", "sample_metadata.csv")
+metadata = read_csv(metadataFile)
+
+HTO_data$Protocol <- "Hashtag Ab"
+LMO_data$Protocol <- "MULTI-Seq"
+CMO_data$Protocol <- "CellPlex"
+
+# Rename HTO Hashtag name
+metadata$Hashtag_Name <- gsub("Human_", "", metadata$Hashtag_Name)
+
+combined <- as.data.frame(rbind(
+  HTO_data[c(1:12),],
+  LMO_data[c(1:12),],
+  CMO_data[c(1:12),]))
+```
+
+```{r, eval=FALSE}
+tb <- left_join(combined, metadata, 
+          by = c("Category" = "Hashtag_Name")
+          )
+tb <- as_tibble(tb)
+
+tb$Category <- recode(tb$Category,
+                      `No tag assigned` = "unassigned",
+                      `1 tag assigned` = 'singlet',
+                      `More than 1 tag assigned` = "multiplet"
+)
+                      
+tb$Replicate <- replace_na(tb$Replicate, "None")
+tb$Donor <- coalesce(tb$Donor,tb$Category)
+
+# Remove the No tag molecules and singlets from summary data
+tb <- tb[!tb$Donor == "No tag molecules",]
+tb <- tb[!tb$Donor == "singlet",]
+tb_orig <- tb
+tb %>% 
+  select(Category:pct_cells,Protocol,Donor:Replicate) %>% 
+  kable()
+
+write_csv(tb, here::here(
+  "PBMC/data/Matrices/oligo_summary", "oligo_tag_summary.csv"
+))
+```
+
+```{r}
+# Restart from saved matrix
+tb <- read_csv(here::here(
+  "PBMC/data/Matrices", "oligo_tag_summary.csv"))
+```
+
+
+The category No tag assigned includes both cells that were considered Blanks and cells considered Unassigned
+
+## Make some plots {.tabset}
+In daniel's notes:
+Comment of **One third fewer cells**
+*  VBDR1206_Rep-One_MULTI_4
+*  VBDR1186_Rep-One_MULTI_6
+
+This is reflected in the data
+
+### By Label
+```{r Label}
+plt1 <- ggplot(data=tb) +
+  geom_jitter(aes(y=pct_cells, x=Donor, colour=Protocol), 
+              size=2, width = 0.25, alpha=1) +
+  scale_colour_brewer(type="qualitative", palette = "Set1") +
+  xlab("Cell Ranger Multi Label") + ylab("Percent of capture")
+
+plt1
+```
+
+### By Protocol
+```{r Protocol}
+plt2 <- ggplot(data=tb) +
+  geom_jitter(aes(y=pct_cells, x=Protocol, colour=Donor), 
+              size=2, width = 0.25) +
+  scale_colour_brewer(type="qualitative", palette = "Set1") +
+  xlab("Cell Ranger Multi Label") + ylab("% Cells") 
+
+plt2
+```
+
+### Facet by Protocol
+
+```{r Facet_protocol}
+plt3 <- ggplot(data=tb) +
+  geom_jitter(aes(y=pct_cells, x=Donor, colour=Replicate), 
+              size=2, width = 0.1,alpha=0.8) +
+  xlab("Cell Ranger Multi Label") + ylab("% Cells") +
+  scale_colour_Publication() + theme(axis.text.x = element_text(size=12))
+
+plt3 + facet_grid(~Protocol)
+```
+
+Facet donor.
+
+```{r Facet_donor}
+plt3 <- ggplot(data=tb) +
+  geom_jitter(aes(y=pct_cells, x=Protocol, colour=Replicate), 
+              size=2, width = 0.1,alpha=0.8) +
+  xlab("Cell Ranger Multi Label") + ylab("% Cells") +
+  scale_colour_Publication() + theme(axis.text.x = element_text(size=12))
+
+plt3 + facet_grid(~Donor)
+```
+
+## Reads Sequenced for each protocol
+
+This output is emitted by cell ranger.
+
+```{r getReadsSequenced}
+HTO_Stats_file = here::here("PBMC/data/NN239/NN239/R010_HTO_multi/outs",
+           "per_sample_outs/VBDR1233_Rep-One_HTO_1/metrics_summary.csv")
+
+LMO_Stats_file = here::here("PBMC/data/NN239/NN239/R010_LMO_multi/outs",
+           "per_sample_outs/VBDR1233_Rep-One_MULTI_2/metrics_summary.csv")
+
+CMO_Stats_file = here::here("PBMC/data/NN239/NN239/R010_CMO_multi/outs",
+           "per_sample_outs/VBDR1233_Rep-One_CMO301/metrics_summary.csv")
+
+HTO_stats = read.table(HTO_Stats_file, header = TRUE,sep=",")
+LMO_stats = read.table(LMO_Stats_file, header = TRUE,sep=",")
+CMO_stats = read.table(CMO_Stats_file, header = TRUE,sep=",")
+HTO_read_count=HTO_stats[1,"Metric.Value"]
+CMO_read_count=CMO_stats[1,"Metric.Value"]
+LMO_read_count=LMO_stats[1,"Metric.Value"]
+
+df <- data.frame(Protocol=c("HTO","CMO","LMO"),
+                read_count=c(HTO_read_count,CMO_read_count,LMO_read_count))
+
+df$read_count <- gsub(",","", df$read_count)
+df$read_count <- as.integer(df$read_count)
+```
+
+Very similar number of reads sequenced.
+
+```{r Reads}
+plt4 <- ggplot(data=df) +
+  geom_point(aes(y=read_count, x=Protocol, colour=Protocol), size=2) +
+  xlab("Protocol") + ylab("Reads") + 
+  ylim(0, 9*10^7)
+
+plt4 + scale_colour_Publication()
+```
+
+# Plot the singlet ratio
+
+```{r singlet}
+tb <- left_join(combined, metadata, 
+          by = c("Category" = "Hashtag_Name")
+          )
+tb <- as_tibble(tb)
+
+tb$Category <- recode(tb$Category,
+                      `No tag assigned` = "unassigned",
+                      `1 tag assigned` = 'singlet',
+                      `More than 1 tag assigned` = "multiplet",
+                      `No tag molecules` = "blanks"
+)
+                      
+tb$Replicate <- replace_na(tb$Replicate, "None")
+tb$Donor <- coalesce(tb$Donor,tb$Category)
+
+# Keep the No tag molecules and singlets from summary data
+keep_rows <- c("unassigned", "multiplet", "singlet")
+tb <- tb %>% 
+  filter(Donor %in% keep_rows)
+
+tb %>% 
+  select(Category:pct_cells,Protocol,Donor:Replicate) %>% 
+  kable()
+```
+
+Annoyingly in this summary blanks and unassigned are rolled into the same category.
+
+```{r singlet_unassigned}
+plt6 <- ggplot(data=tb,
+               aes(y=pct_cells, x=Protocol, fill=Category)) +
+  geom_bar(position = position_stack(reverse = TRUE),
+           stat="identity") +
+  xlab("Protocol") + ylab("Percent of capture") +
+  scale_y_continuous(breaks=seq(0,100,20)) +
+  scale_fill_manual(values=c("#E69F00", "#56B4E9", "#999999"), name = "Droplet call")
+
+plt6 
+```
+
+# Plot signal to noise for each protocol
+
+```{r}
+HTO_file_path = here::here("PBMC/data/NN239/metrics_summary", "HTO_metrics_summary.csv")
+CMO_file_path = here::here("PBMC/data/NN239/metrics_summary", "CMO_metrics_summary.csv")
+LMO_file_path = here::here("PBMC/data/NN239/metrics_summary", "LMO_metrics_summary.csv")
+
+HTO_data = read_csv(HTO_file_path)
+HTO_data <- HTO_data %>% 
+  filter(`Metric Name` == "CMO signal-to-noise ratio")
+HTO_data$Protocol <- "Hashtag Ab"
+
+CMO_data = read_csv(CMO_file_path)
+CMO_data <- CMO_data %>% 
+  filter(`Metric Name` == "CMO signal-to-noise ratio")
+CMO_data$Protocol <- "CellPlex"
+
+LMO_data = read_csv(LMO_file_path)
+LMO_data <- LMO_data %>% 
+  filter(`Metric Name` == "CMO signal-to-noise ratio")
+LMO_data$Protocol <- "MULTI-Seq"
+
+tb <- rbind(CMO_data, LMO_data, HTO_data)
+tb$`Metric Value` <- as.numeric(tb$`Metric Value`)
+```
+
+```{r}
+# Restart from saved matrix
+tb <- read_csv(here::here(
+  "PBMC/data/Matrices", "multiplexing_summary_stats.csv"))
+```
+
+Mung the names of the tags
+
+```{r}
+tb$CellRangerCall <- tb$`Group Name`
+
+tb$CellRangerCall <- recode(tb$CellRangerCall,
+                      CMO301="Tag1",
+                      CMO302="Tag2",
+                      CMO303="Tag3",
+                      CMO304="Tag4",
+                      CMO305="Tag5",
+                      CMO306="Tag6",
+                      CMO307="Tag7",
+                      CMO308="Tag8",
+                      HTO_1="Tag1",
+                      HTO_2="Tag2",
+                      HTO_3= "Tag3",
+                      HTO_4= "Tag4",
+                      HTO_5= "Tag5",
+                      HTO_6= "Tag6",
+                      HTO_7= "Tag7",
+                      HTO_8= "Tag8",
+                      MULTI_2= "Tag1",
+                      MULTI_3= "Tag2",
+                      MULTI_4= "Tag3",
+                      MULTI_5= "Tag4",
+                      MULTI_6= "Tag5",
+                      MULTI_7= "Tag6",
+                      MULTI_8= "Tag7",
+                      MULTI_9= "Tag8"
+)
+```
+
+Make the plot.
+
+The bad hashtag is HTO_1
+
+```{r signal_noise, fig.cap="Signal to noise from cell ranger"}
+plt4 <- ggplot(data=tb) +
+  geom_jitter(aes(y=`Metric Value`, x=Protocol, colour=CellRangerCall), 
+              size=3, width = 0.15,alpha=0.66,
+              show.legend = FALSE) +
+  scale_y_continuous(breaks=seq(0,10,1)) +
+  xlab("") + ylab("Signal to noise ratio") +
+  scale_colour_brewer(type="qualitative", palette = "Dark2") +
+  theme_Publication(base_size=20)
+
+plt4
+```
+
+# Conclusion 
+MULTI-Seq looks the best followed by Total-Seq hashtag. We await the sequencing of the gene expression libraries which will give the ground truth.
+
+## Session info
+```{r sessionInfo}
+write_csv(tb, here::here(
+  "PBMC/data/Matrices/oligo_summary", "multiplexing_summary_stats.csv"
+))
+
+sessionInfo()
+```

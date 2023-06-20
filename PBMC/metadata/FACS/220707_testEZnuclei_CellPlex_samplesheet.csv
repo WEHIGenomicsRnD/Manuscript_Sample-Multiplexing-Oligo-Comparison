@@ -1,0 +1,11 @@
+name,Reagent,PostLabel,Replicate
+CellPlex_A594_only_004.fcs,A594,1,One
+CellPlex_A647_only_003.fcs,A647,1,One
+CellPlex_detection_oligo_Only_002.fcs,Detection,1,One
+CellPlex_dual_label_30m_rep1_008.fcs,CellPlex,30,One
+CellPlex_dual_label_30m_rep2_009.fcs,CellPlex,30,Two
+CellPlex_dual_label_30m_rep3_010.fcs,CellPlex,30,Three
+CellPlex_dual_label_rep1_005.fcs,CellPlex,1,One
+CellPlex_dual_label_rep2_006.fcs,CellPlex,1,Two
+CellPlex_dual_label_rep3_007.fcs,CellPlex,1,Three
+CellPlex_unstained_001.fcs,Unstained,1,One

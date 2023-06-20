@@ -6,6 +6,15 @@
 .RData
 .RDataTmp
 
+# Reports
+*.html
+
+# Images
+*.png
+
+# Data
+*.rds
+
 # User-specific files
 .Ruserdata
 
@@ -47,3 +56,6 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Junk files
+*DS_Store

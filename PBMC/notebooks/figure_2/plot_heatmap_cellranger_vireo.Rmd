@@ -1,0 +1,261 @@
+---
+title: "Heatmap of vireo and cell ranger multi agreement"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6,
+                      fig.path='../figures/heat_vireo/',
+                      layout="l-body-outset")
+knitr::opts_knit$set(root.dir = here::here())
+library(here)
+library(tidyverse)
+library(knitr)
+library(pheatmap)
+library(viridis)
+library(patchwork)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+## Aim
+
+Polished analysis to visualize data for manuscript.
+
+# Read data
+
+Homotypic doublets are retained in this tibble
+
+```{r}
+tb <- read_csv("/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/pbmc_calls_rmHomoDoublets.csv.gz")
+
+tb <- tb %>%
+  select(cell_id, Protocol, vir_Donor, mul_Assignment, mul_Donor, chr_bff_cluster)
+
+tb$Protocol <- recode(tb$Protocol,
+                       HTO = "Hashtag Ab",
+                       LMO = "MULTI-Seq",
+                       CMO = "CellPlex")
+
+```
+
+Recode the VBDR donors to generic labels
+
+```{r}
+tb$mul_Donor <- recode(tb$mul_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+tb$vir_Donor <- recode(tb$vir_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+```
+
+
+```{r}
+ocm <- read_csv("/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/ocm/oca_cm.csv")
+
+ocm$Protocol <- recode(ocm$Protocol,
+                       HTO = "Hashtag Ab",
+                       LMO = "MULTI-Seq",
+                       CMO = "CellPlex")
+
+ocm$mul_Donor <- recode(ocm$mul_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+ocm$vir_Donor <- recode(ocm$vir_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+```
+
+## Sample classification specific accuracy
+
+In case I need to show this data at some point.
+
+```{r oca_cm}
+sample_ocm <- read_csv("/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/ocm/sample_ca.csv")
+
+sample_ocm$Protocol<- recode(sample_ocm$Protocol,
+                       HTO = "Hashtag Ab",
+                       LMO = "MULTI-Seq",
+                       CMO = "CellPlex")
+
+sample_ocm$Classification <- recode(sample_ocm$Classification,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+sample_ocm$vir_Donor <- recode(sample_ocm$vir_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+sample_ocm$n <- as.integer(sample_ocm$n)
+```
+
+# Generate heatmaps {.tabset}
+
+```{r}
+font_size <- 16
+fontsizeNumber <- 16
+```
+
+## CellPlex
+
+Mung into shape
+
+```{r}
+protocol <- "CellPlex"
+
+crm <- sample_ocm %>% 
+  filter(Protocol == protocol) %>% 
+  filter(algorithm == "Cell Ranger") %>% 
+  select(vir_Donor, Classification,Protocol, n) %>% 
+  pivot_wider(names_from = vir_Donor, values_from = n)
+
+crm <- as.data.frame(crm)
+row.names(crm) <- crm$Classification
+crm <- as.matrix(crm[,c(3:8)])
+# Recode NA to 0
+crm[is.na(crm)] <- 0
+```
+
+Generate the heatmap
+
+```{r cellplex_heat}
+pheatmap(crm,
+         cluster_rows=F,
+         cluster_cols = F,
+         treeheight_col=0,
+         treeheight_row=0,
+         show_rownames=TRUE,
+         show_colnames = TRUE,
+         display_numbers = TRUE,
+         color = viridis(100), 
+         number_color = "white",
+         fontsize=font_size, 
+         number_format = "%0.f", 
+         fontsize_number = fontsizeNumber,
+         main="CellPlex"
+         )
+```
+
+## Hashtag Ab
+
+Mung into shape
+
+```{r}
+protocol <- "Hashtag Ab"
+
+crm <- sample_ocm %>% 
+  filter(Protocol == protocol) %>% 
+  filter(algorithm == "Cell Ranger") %>% 
+  select(vir_Donor, Classification,Protocol, n) %>% 
+  pivot_wider(names_from = vir_Donor, values_from = n)
+
+crm <- as.data.frame(crm)
+row.names(crm) <- crm$Classification
+crm <- as.matrix(crm[,c(3:8)])
+# Recode NA to 0
+crm[is.na(crm)] <- 0
+```
+
+Generate the heatmap
+
+```{r hashtag_heat}
+pheatmap(crm,
+         cluster_rows=F,
+         cluster_cols = F,
+         treeheight_col=0,
+         treeheight_row=0,
+         show_rownames=TRUE,
+         show_colnames = TRUE,
+         display_numbers = TRUE,
+         color = viridis(100), 
+         number_color = "white",
+         fontsize=font_size, 
+         number_format = "%0.f", 
+         fontsize_number = fontsizeNumber,
+         main="Hashtag Ab"
+         )
+```
+
+## MULTI-Seq LMO
+
+Mung into shape
+
+```{r}
+protocol <- "MULTI-Seq"
+
+crm <- sample_ocm %>% 
+  filter(Protocol == protocol) %>% 
+  filter(algorithm == "Cell Ranger") %>% 
+  select(vir_Donor, Classification,Protocol, n) %>% 
+  pivot_wider(names_from = vir_Donor, values_from = n)
+
+crm <- as.data.frame(crm)
+row.names(crm) <- crm$Classification
+crm <- as.matrix(crm[,c(3:8)])
+# Recode NA to 0
+crm[is.na(crm)] <- 0
+```
+
+Generate the heatmap
+
+```{r multiseq_heat}
+pheatmap(crm,
+         cluster_rows=F,
+         cluster_cols = F,
+         treeheight_col=0,
+         treeheight_row=0,
+         show_rownames=TRUE,
+         show_colnames = TRUE,
+         display_numbers = TRUE,
+         color = viridis(100), 
+         number_color = "white",
+         fontsize=font_size, 
+         number_format = "%0.f", 
+         fontsize_number = fontsizeNumber,
+         main="MULTI-Seq"
+         )
+```
+
+### Session Info
+
+```{r}
+sessionInfo()
+```

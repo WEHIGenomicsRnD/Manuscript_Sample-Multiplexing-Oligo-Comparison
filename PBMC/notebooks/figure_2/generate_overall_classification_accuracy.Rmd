@@ -1,0 +1,306 @@
+---
+title: "Generate Overall classification accuracy tables"
+description: "Implement the summary metric of Mylka et a;., 2022"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6,
+                      fig.path='./figures/oca/',
+                      layout="l-body-outset")
+knitr::opts_knit$set(root.dir = here::here())
+library(here)
+library(tidyverse)
+library(ggalluvial)
+library(knitr)
+library(patchwork)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Overall classification accuracy
+
+## Aim
+
+Polished analysis to visualize data for manuscript.
+
+## Description of OCA
+
+The descrtion below is taken from *Mylka, V., Matetovici, I., Poovathingal, S., Aerts, J., Vandamme, N., Seurinck, R., Verstaen, K., Hulselmans, G., Van den Hoecke, S., Scheyltjens, I., Movahedi, K., Wils, H., Reumers, J., Van Houdt, J., Aerts, S., & Saeys, Y. (2022). Comparative analysis of antibody-and lipid-based multiplexing methods for single-cell RNA-seq. Genome Biology, 23(1), 55. https://doi.org/10.1186/s13059-022-02628-8*
+
+"The hashing accuracy or Overall Classification Accuracy (OCA) was calculated as the overlap between cell line annotation using Seurat (MULTISeqDemux and HTODemux functions) or GMM-Demux [21], and freemuxlet as a reference annotation as follows:
+
+"the number of all matching singlets (e.g., a given cell i annotated as one cell line/strain by both Seurat and freemuxlet)
+plus a number of matching non-singlets (mostly multiplets),divided by the number of all cells."
+
+Another source I found is http://www.sthda.com/english/articles/36-classification-methods-essentials/143-evaluation-of-classification-model-accuracy-essentials/
+
+"The overall classification accuracy rate corresponds to the proportion of observations that have been correctly classified. Determining the raw classification accuracy is the first step in assessing the performance of a model."
+
+### My translation
+
+The sum of matching calls by the tag demultiplexing algorithm divided by the total number of cells.
+
+## Recap
+The purpose of this experiment was to compare the performance of 3 different cell multiplexing reagents in PBMCs.  
+To obtain the ground truth of performance, the genotypes may be used to demultiplex donors.
+In this experiment there are 4 donors. The cell multiplexing was done in technical duplicate.  
+
+This is going to be extremely similar to **plot multiplex labels.Rmd** notebook.
+
+# Identify homotypic doublets and wrote to file
+
+A problem arises in that I have split each donor into technical duplicate.
+This means that homotypic doublets will be missed by vireo. What I can do is get the cell barcodes of all homotypic doublets called by cell ranger multi and remove them from the analysis.
+
+```{r crm_calls, include=FALSE, cache=TRUE}
+cmoCalls <- read_csv(here::here("PBMC/data/NN236/R010_CMO_multi/outs/multi/multiplexing_analysis", 
+                                "tag_calls_per_cell.csv"))
+cmoCalls$Protocol <- "CellPlex"
+
+lmoCalls<- read_csv(here::here("PBMC/data/NN236/R010_LMO_multi/outs/multi/multiplexing_analysis", 
+                               "tag_calls_per_cell.csv"))
+lmoCalls$Protocol <- "MULTI-Seq"
+
+htoCalls <- read_csv(here::here("PBMC/data/NN236/R010_HTO_multi/outs/multi/multiplexing_analysis", 
+                               "tag_calls_per_cell.csv"))
+htoCalls$Protocol <- "Hashtag Ab"
+
+tag_calls_per_cell <- rbind(htoCalls, cmoCalls, lmoCalls)
+
+doublet_calls_per_cell <- tag_calls_per_cell %>% 
+  filter(num_features == 2)
+
+```
+
+Need to list the pairs of hashtags that belong to the same donor
+
+```{r}
+same_donor <- c(
+                      "CMO301|CMO302",
+                      "CMO303|CMO304",
+                      "CMO305|CMO306",
+                      "CMO307|CMO308",
+                      "HTO_1|HTO_2",
+                      "HTO_3|HTO_4",
+                      "HTO_5|HTO_6",
+                      "HTO_7|HTO_8",
+                      "MULTI_2|MULTI_3",
+                      "MULTI_4|MULTI_5",
+                      "MULTI_6| MULTI_7",
+                      "MULTI_8|MULTI_9"
+)
+
+homo_doublets <- doublet_calls_per_cell %>% 
+   filter(feature_call %in% same_donor)
+write_csv(homo_doublets, file = here::here(
+  "PBMC/data/Matrices/PBMCs", "pbmc_homo_doublets.csv"
+))
+
+percent_homotypic <- length(row.names(homo_doublets)) / length(row.names(doublet_calls_per_cell))
+```
+
+* The number of homotypic doublets is: `r length(row.names(homo_doublets))`
+* The percent homotypic doublets of total is `r percent_homotypic * 100`
+
+# Read data
+
+```{r readIN, include=FALSE}
+tb <- read_csv(
+  "/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/vireoCellMultiCellHR_unified.csv.gz"
+)
+
+
+samplesheet <- read_csv(here::here(
+  "PBMC/metadata/NN232", "sample_metadata_v2.csv"
+))
+
+sample_mapping <- samplesheet[,c(5,2)]
+
+
+tb$Protocol <- recode(tb$Protocol,
+                       HTO = "Hashtag Ab",
+                       LMO = "MULTI-Seq",
+                       CMO = "CellPlex")
+
+```
+
+Remove the homotypic doublets
+
+```{r}
+tb_all <- tb
+
+remove_cells <- paste(homo_doublets$cell_barcode, homo_doublets$Protocol, sep = "_")
+cells  <- paste(tb$cell_barcode, tb$Protocol, sep = "_")
+
+tb <- tb[!cells %in% remove_cells,]
+
+write_csv(tb_all, file = here::here(
+  "PBMC/data/Matrices/PBMCs", "pbmc_calls_all.csv.gz"
+))
+```
+
+## recode bff cluster to donor label
+
+Make the tibble less cluttered. Also need to recode the bff_cluster column.
+
+```{r}
+# recode bff cluster to donor label
+tb$bff_donor <- tb$chr_bff_cluster
+tb$bff_donor <- recode(tb$bff_donor,
+                      CMO301="VBDR1233",
+                      CMO302="VBDR1233",
+                      CMO303="VBDR1206",
+                      CMO304="VBDR1206",
+                      CMO305="VBDR1186",
+                      CMO306="VBDR1186",
+                      CMO307="VBDR1216",
+                      CMO308="VBDR1216",
+                      HTO_1="VBDR1233",
+                      HTO_2="VBDR1233",
+                      HTO_3= "VBDR1206",
+                      HTO_4= "VBDR1206",
+                      HTO_5= "VBDR1186",
+                      HTO_6= "VBDR1186",
+                      HTO_7= "VBDR1216",
+                      HTO_8= "VBDR1216",
+                      MULTI_2= "VBDR1233",
+                      MULTI_3= "VBDR1233",
+                      MULTI_4= "VBDR1206",
+                      MULTI_5= "VBDR1206",
+                      MULTI_6= "VBDR1186",
+                      MULTI_7= "VBDR1186",
+                      MULTI_8= "VBDR1216",
+                      MULTI_9= "VBDR1216"
+)
+
+```
+
+Unify the sample labels
+
+```{r}
+tb$mul_Assignment <- recode(tb$mul_Assignment,
+                       Multiplet = "multiplet",
+                       Unassigned = "unassigned")
+
+
+tb$chr_bff_cluster <- recode(tb$chr_bff_cluster,
+                             Negative = "unassigned",
+                             Doublet = "multiplet")
+
+tb$bff_donor <- recode(tb$bff_donor,
+                             Negative = "unassigned",
+                             Doublet = "multiplet")
+```
+
+Summarise
+
+```{r}
+tb %>% 
+  head() %>% 
+  kable()
+
+write_csv(tb, file = here::here(
+  "PBMC/data/Matrices/PBMCs", "pbmc_calls_rmHomoDoublets.csv.gz"
+))
+```
+
+# Overall classification accuracy homotypic doublets removed
+
+If I want to include all cells can use the tb_all object.
+
+I wrangle all of these with the [tidyverse](ttps://www.tidyverse.org/packages/) and [WEHI](https://bookdown.org/ansellbr/WEHI_tidyR_course_book/) version. 
+
+## Calculate overall OCM
+
+```{r ocm}
+
+tb_long <- tb %>% 
+  select(Protocol, vir_Donor, mul_Donor, bff_donor) %>% 
+  pivot_longer(cols = c(mul_Donor, bff_donor), names_to = "Algorithm", values_to = "Classification")
+
+ocm <- tb_long %>% 
+  group_by(Protocol, Algorithm) %>% 
+  mutate(match = vir_Donor == Classification) %>% 
+  dplyr::count(match, Protocol,Algorithm) %>% 
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(percent))
+
+ocm %>% 
+  pivot_wider(names_from = Algorithm, values_from = percent) %>% 
+  kable()
+
+write_csv(ocm, file = here::here(
+  "PBMC/data/Matrices/PBMCs/ocm", "ocm_pbmc.csv"
+))
+```
+
+## Calculate sample classification specific accuracy
+
+In case I need to show this data at some point.
+
+```{r oca_cm}
+oca_cm <- tb %>% 
+  dplyr::count(vir_Donor, mul_Donor,Protocol) %>%
+  group_by(vir_Donor,Protocol) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(percent))
+
+write_csv(oca_cm, file = here::here(
+  "PBMC/data/Matrices/PBMCs/ocm", "oca_cm.csv"
+))
+
+oca_cm %>% 
+  head(10) %>% 
+  kable()
+
+oca_cm$algorithm <- "Cell Ranger"
+oca_cm <- rename(oca_cm, Classification = mul_Donor)
+
+# Next look at BFF cluster
+
+oca_bff <- tb %>% 
+  dplyr::count(vir_Donor, bff_donor,Protocol) %>%
+  group_by(vir_Donor,Protocol) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(percent))
+
+oca_bff %>% 
+  head(10) %>% 
+  kable()
+
+oca_bff$algorithm <- "BFF cluster"
+oca_bff <- rename(oca_bff, Classification = bff_donor)
+
+# Combine the two tibbles
+
+sample_ocm <- rbind(oca_cm, oca_bff)
+sample_ocm$match <- sample_ocm$vir_Donor == sample_ocm$Classification
+
+write_csv(sample_ocm, file = here::here(
+  "PBMC/data/Matrices/PBMCs/ocm", "sample_ca.csv"
+))
+```
+
+Visualise the plot overall classification accuracy notebook
+
+### Session Info
+
+```{r}
+sessionInfo()
+```

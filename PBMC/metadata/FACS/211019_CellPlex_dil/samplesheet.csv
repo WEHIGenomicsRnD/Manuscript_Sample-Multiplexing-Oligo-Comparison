@@ -1,0 +1,14 @@
+name,label,concentration,replicate,storage
+19Oct21_CellPlex 1-3a-10.fcs,CMO,10,One,0
+19Oct21_CellPlex 1-3a-100.fcs,CMO,100,One,0
+19Oct21_CellPlex 1-3a-2.fcs,CMO,2,One,0
+19Oct21_CellPlex 1-3a-20.fcs,CMO,20,One,0
+19Oct21_CellPlex 1-3a-3.fcs,CMO,3,One,0
+19Oct21_CellPlex 1-3a-5.fcs,CMO,5,One,0
+19Oct21_CellPlex 1-3a-50.fcs,CMO,50,One,0
+19Oct21_CellPlex UD II.fcs,CMO,1,Two,0
+19Oct21_CellPlex UD.fcs,CMO,1,One,0
+19Oct21_HashTag 15.fcs,HTO,1,One,15
+19Oct21_HashTag 6_PI.fcs,HTO,1,One,6
+19Oct21_Unstained PI.fcs,US,0,One,0
+19Oct21_Unstained V.fcs,US,0,Two,0

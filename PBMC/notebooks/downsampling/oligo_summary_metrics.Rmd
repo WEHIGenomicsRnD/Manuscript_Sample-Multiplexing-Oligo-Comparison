@@ -1,0 +1,234 @@
+---
+title: "Oligo metrics summary after downsampling"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/oligoSummaryDS/',
+                      warning=FALSE, message=FALSE,
+                      layout="l-body-outset")
+library(here)
+knitr::opts_knit$set(root.dir = here::here())
+library(tidyverse)
+library(knitr)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Recap
+The purpose of this experiment was to compare the performance of 3 different cell multiplexing reagents in PBMCs.  
+To obtain the ground truth of performance, the genotypes may be used to demultiplex donors.
+In this experiment there are 4 donors. The cell multiplexing was done in technical duplicate.  
+
+# Aim
+
+Plot summary statistics for Cell multiplexing oligos. I performed downsampling of the multiplexing tags fastq files.
+
+There is no way I know of getting a fixed reads per cell for tag oligos.  
+The best I can do is get the cell number of each capture and multiply by the number of reads.  
+This is described in *scripts/downsampling/downsample_tags*
+
+* CMO = 19,943 cells
+* LMO = 21,419 cells
+* HTO = 21,131 cells
+
+## Compare:
+
+Reagents
+1. Total-Seq A hashtag
+2. MULTI-seq LMO
+3. CellPlex reagent
+
+Donors
+1. VBDR1233
+2. VBDR1206
+3. VBDR1186
+4. VBDR1216
+
+## Read in data from cellranger multi
+```{r readFiles}
+pathHead <- "/data/downsample_tags/cell_ranger/"
+pathTail <- "/outs/multi/multiplexing_analysis/tag_calls_summary.csv"
+ds <- c("CMO_ds_1h", "CMO_ds_5h","CMO_ds_1k", "CMO_ds_2k", "CMO_ds_5k",
+        "LMO_ds_1h", "LMO_ds_5h","LMO_ds_1k", "LMO_ds_2k", "LMO_ds_5k",
+        "HTO_ds_1h", "HTO_ds_5h","HTO_ds_1k", "HTO_ds_2k", "HTO_ds_5k"
+        )
+
+file_paths <- vector(mode = "character", length = length(ds))
+
+for (i in 1:length(ds)) {
+  file_paths[i] <- paste(here::here(), pathHead, ds[i], pathTail, sep = "")
+  print(file_paths[i])
+}
+
+tag_call_list <- lapply(file_paths, read.csv)
+names(tag_call_list) <- ds
+tag_call_df <- do.call(rbind, tag_call_list)
+```
+
+Mung the dataframe of summary stats into a nice tibble
+
+```{r mung_stat_tb}
+tag_call_df$key <- row.names(tag_call_df)
+tag_call_tb <- as_tibble(tag_call_df)
+tag_call_tb$protocol <- str_split(tag_call_tb$key, "_", simplify = T)[,1]
+tag_call_tb$reads <- str_split(tag_call_tb$key, "_", simplify = T)[,3]
+tag_call_tb$reads <- str_split(tag_call_tb$reads, "\\.", simplify = T)[,1]
+
+# Recode the reads column to numeric
+tag_call_tb$reads <- recode(tag_call_tb$reads,
+                            "1h" = "100",
+                            "5h" = "500",
+                            "1k" = "1000",
+                            "2k" = "2500",
+                            "5k" = "5000")
+
+tag_call_tb$reads <- as.numeric(tag_call_tb$reads)
+keep_fields <- c("No tag assigned", "1 tag assigned", "More than 1 tag assigned")
+
+tag_call <- tag_call_tb[tag_call_tb$Category %in% keep_fields,]
+
+# Recode the category column to be consistent with manuscript labels
+tag_call$call <- recode(tag_call$Category,
+                            "No tag assigned" = "unassigned",
+                            "1 tag assigned" = "singlet",
+                            "More than 1 tag assigned" = "multiplet")
+
+tag_call %>% 
+  select(call, num_cells, pct_cells, protocol, reads) %>% 
+  kable()
+```
+
+# Build sample metadata
+
+Daniel wrote the metadata file himself
+
+```{r}
+metadataFile = here::here("metadata/NN232", "sample_metadata.csv")
+metadata = read_csv(metadataFile)
+
+tag_call$ID <- tag_call$protocol
+# Recode the protocol column to be consistent with manuscript labels
+tag_call$protocol <- recode(tag_call$protocol,
+                            "CMO" = "CellPlex",
+                            "LMO" = "MULTI-Seq",
+                            "HTO" = "Hashtag Ab")
+
+```
+
+The category No tag assigned includes both cells that were considered Blanks and cells considered Unassigned
+
+## Plot broad classification {.tabset}
+
+* There is a jump between 100 and 500 reads per cell but beyond that there is not much difference.
+* The difference between 1,000 and 5,000 is almost nothing.  
+* Only the multiplet and unassigned seems to be changing.
+
+### By Label
+```{r Label}
+plt1 <- ggplot(data=tag_call) +
+  geom_point(aes(y=pct_cells, x=reads, colour=call), 
+              size=3) +
+  geom_line(aes(y=pct_cells, x=reads, colour=call)) +
+  scale_y_continuous(breaks=seq(0,100,20), limits = c(0,100)) + 
+  scale_colour_brewer(type="qualitative", palette = "Dark2") +
+  xlab("Downsampled oligo tag reads per cell") + ylab("Percent of capture") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~protocol)
+
+plt1
+```
+
+# Plot signal to noise for each protocol {.tabset}
+
+## Cell Plex
+
+```{r readNoiseFile}
+pathHead <- "/data/downsample_tags/cell_ranger/"
+pathTail <- "/outs/per_sample_outs/VBDR1186_Rep-One_CMO305/metrics_summary.csv"
+ds <- c("CMO_ds_1h", "CMO_ds_5h",
+  "CMO_ds_1k", "CMO_ds_2k", "CMO_ds_5k")
+
+file_paths <- vector(mode = "character", length = length(ds))
+
+for (i in 1:length(ds)) {
+  file_paths[i] <- paste(here::here(), pathHead, ds[i], pathTail, sep = "")
+  print(file_paths[i])
+}
+
+so_list <- lapply(file_paths, read.csv)
+names(so_list) <- ds
+so_df <- do.call(rbind, so_list)
+```
+
+Mung the dataframe of signal noise stats into a nice tibble
+
+```{r mung_so_tb}
+so_df$key <- row.names(so_df)
+so_tb <- as_tibble(so_df)
+so_tb$protocol <- str_split(so_tb$key, "_", simplify = T)[,1]
+so_tb$reads <- str_split(so_tb$key, "_", simplify = T)[,3]
+so_tb$reads <- str_split(so_tb$reads, "\\.", simplify = T)[,1]
+
+# Recode the reads column to numeric
+so_tb$reads <- recode(so_tb$reads,
+                            "1h" = "100",
+                            "5h" = "500",
+                            "1k" = "1000",
+                            "2k" = "2500",
+                            "5k" = "5000")
+
+so_tb$reads <- as.numeric(so_tb$reads)
+so_tb$Metric.Value <- as.numeric(so_tb$Metric.Value)
+keep_fields <- "CMO signal-to-noise ratio"
+
+so <- so_tb[so_tb$Metric.Name %in% keep_fields,]
+
+so %>% 
+  select(Group.Name , Metric.Name, Metric.Value, reads) %>% 
+  kable()
+```
+
+### Plot signal to noise
+
+Doesn't make sense why signal to noise would decrease with more reads. Maybe it is a sampling effect.
+The plot looks the same as the percent assigned plot
+
+```{r signal_noise, fig.cap="Signal to noise from cell ranger"}
+plt2 <- ggplot(data=so) +
+    geom_point(aes(y=`Metric.Value`, x=reads, colour=Group.Name), 
+              size=2) +
+  geom_line(aes(y=`Metric.Value`, x=reads, colour=Group.Name)) +
+  scale_colour_brewer(type="qualitative", palette = "Set1") +
+  scale_y_continuous(breaks=seq(0,6,2), limits = c(0,8)) + 
+  xlab("Downsampled oligo tag reads per cell") + ylab("Signal to noise ratio") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+plt2
+```
+
+## Session info
+```{r sessionInfo}
+write_csv(tag_call, here::here(
+  "data/Matrices/downsampling", "multiplexing_summary_stats.csv"
+))
+
+sessionInfo()
+```

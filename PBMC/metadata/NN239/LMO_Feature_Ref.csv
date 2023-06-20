@@ -1,0 +1,13 @@
+﻿id,name,read,pattern,sequence,feature_type
+MULTI_2,MULTI_2,R2,5P(BC),CCACAATG,Multiplexing Capture
+MULTI_3,MULTI_3,R2,5P(BC),TGAGACCT,Multiplexing Capture
+MULTI_4,MULTI_4,R2,5P(BC),GCACACGC,Multiplexing Capture
+MULTI_5,MULTI_5,R2,5P(BC),AGAGAGAG,Multiplexing Capture
+MULTI_6,MULTI_6,R2,5P(BC),TCACAGCA,Multiplexing Capture
+MULTI_7,MULTI_7,R2,5P(BC),GAAAAGGG,Multiplexing Capture
+MULTI_8,MULTI_8,R2,5P(BC),CGAGATTC,Multiplexing Capture
+MULTI_9,MULTI_9,R2,5P(BC),GTAGCACT,Multiplexing Capture
+MULTI_10,MULTI_10,R2,5P(BC),CGACCAGC,Multiplexing Capture
+MULTI_11,MULTI_11,R2,5P(BC),TTAGCCAG,Multiplexing Capture
+MULTI_12,MULTI_12,R2,5P(BC),GGACCCCA,Multiplexing Capture
+MULTI_13,MULTI_13,R2,5P(BC),CCAACCGG,Multiplexing Capture

@@ -1,0 +1,1 @@
+This directory is original jumpcode with only mitochondrial and ribosomal genes

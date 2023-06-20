@@ -1,0 +1,604 @@
+---
+title: "Overall classification accuracy"
+description: "Implement the summary metric of Mylka et a;., 2022"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6,
+                      fig.path='../figures/oca/',
+                      layout="l-body-outset")
+knitr::opts_knit$set(root.dir = here::here())
+library(here)
+library(tidyverse)
+library(ggalluvial)
+library(knitr)
+library(patchwork)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication(base_size = 18))
+```
+
+# Overall classification accuracy
+
+## Aim
+
+Polished analysis to visualize data for manuscript.
+
+## Description of OCA
+
+The descrtion below is taken from *Mylka, V., Matetovici, I., Poovathingal, S., Aerts, J., Vandamme, N., Seurinck, R., Verstaen, K., Hulselmans, G., Van den Hoecke, S., Scheyltjens, I., Movahedi, K., Wils, H., Reumers, J., Van Houdt, J., Aerts, S., & Saeys, Y. (2022). Comparative analysis of antibody-and lipid-based multiplexing methods for single-cell RNA-seq. Genome Biology, 23(1), 55. https://doi.org/10.1186/s13059-022-02628-8*
+
+"The hashing accuracy or Overall Classification Accuracy (OCA) was calculated as the overlap between cell line annotation using Seurat (MULTISeqDemux and HTODemux functions) or GMM-Demux [21], and freemuxlet as a reference annotation as follows:
+
+"the number of all matching singlets (e.g., a given cell i annotated as one cell line/strain by both Seurat and freemuxlet)
+plus a number of matching non-singlets (mostly multiplets),divided by the number of all cells."
+
+Another source I found is http://www.sthda.com/english/articles/36-classification-methods-essentials/143-evaluation-of-classification-model-accuracy-essentials/
+
+"The overall classification accuracy rate corresponds to the proportion of observations that have been correctly classified. Determining the raw classification accuracy is the first step in assessing the performance of a model."
+
+### My translation
+
+The sum of matching calls by the tag demultiplexing algorithm divided by the total number of cells.
+
+## Recap
+The purpose of this experiment was to compare the performance of 3 different cell multiplexing reagents in PBMCs.  
+To obtain the ground truth of performance, the genotypes may be used to demultiplex donors.
+In this experiment there are 4 donors. The cell multiplexing was done in technical duplicate.  
+
+This is going to be extremely similar to **plot multiplex labels.Rmd** notebook.
+
+# Read data
+
+Homotypic doublets are removed from this tibble
+
+```{r}
+tb <- read_csv("/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/pbmc_calls_rmHomoDoublets.csv.gz")
+ 
+tb <- tb %>%
+  select(cell_id, Protocol, vir_Donor, mul_Assignment, mul_Donor, chr_bff_cluster)
+
+tb$Protocol <- recode(tb$Protocol,
+                       HTO = "Hashtag Ab",
+                       LMO = "MULTI-Seq",
+                       CMO = "CellPlex")
+
+homo_doublets <- read_csv("/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/pbmc_homo_doublets.csv")
+
+remove_cells <- paste(homo_doublets$cell_barcode, homo_doublets$Protocol, sep = "_")
+
+```
+
+Recode the VBDR donors to generic labels
+
+```{r}
+tb$mul_Donor <- recode(tb$mul_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+tb$vir_Donor <- recode(tb$vir_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+```
+
+
+```{r}
+ocm <- read_csv("/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/ocm/oca_cm.csv")
+
+ocm$Protocol <- recode(ocm$Protocol,
+                       HTO = "Hashtag Ab",
+                       LMO = "MULTI-Seq",
+                       CMO = "CellPlex")
+
+ocm$mul_Donor <- recode(ocm$mul_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+ocm$vir_Donor <- recode(ocm$vir_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+ocm
+```
+
+## Sample classification specific accuracy
+
+
+```{r oca_cm}
+sample_ocm <- read_csv("/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/ocm/sample_ca.csv")
+
+sample_ocm$Protocol<- recode(sample_ocm$Protocol,
+                       HTO = "Hashtag Ab",
+                       LMO = "MULTI-Seq",
+                       CMO = "CellPlex")
+
+sample_ocm
+```
+
+# Visualise overall sample agreement {.tabset}
+
+## Compare SNP to Cell Ranger multi
+
+```{r per_method_tbl}
+per_method_tbl <- tb %>% 
+  select(c(vir_Donor, mul_Donor, cell_id, Protocol)) %>% 
+  pivot_longer(cols=c(vir_Donor,mul_Donor),
+               names_to = "Method", values_to="Donor") %>% 
+  dplyr::count(Donor, Method, Protocol) %>%
+  group_by(Method,Protocol) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(percent))
+
+# Recode Method
+per_method_tbl$Method <- recode(per_method_tbl$Method,
+                                vir_Donor = "SNP",
+                                mul_Donor = "Cell Ranger")
+
+per_method_tbl$Donor <- fct_relevel(per_method_tbl$Donor, 
+            "multiplet", "unassigned", "blank")
+
+per_method_tbl$Donor <- factor(per_method_tbl$Donor, 
+                               levels=c("donor3", "donor2", "donor1", "donor0", 
+                                        "blank", "unassigned", "multiplet"))
+
+per_method_tbl
+```
+
+Generate a stacked barchart
+
+```{r cellMulti_Vir_calls, fig.cap="The calls produced by cellranger mullti vs the genotype calls made from Vireo. Black line = multiplet rate total. White line = identifiable multiple rate 4 donors",fig.asp=0.75}
+ggplot(per_method_tbl, 
+             aes(x = Method, y= percent, fill = Donor)) + 
+  geom_bar(position="stack", stat="identity") +
+  ylab("Percent of capture") + 
+  xlab("") +
+  scale_y_continuous(breaks=seq(0,100,20)) +
+  geom_hline(yintercept=16.6, linetype="dashed", color = "black") +
+  geom_hline(yintercept=14.64, linetype="dashed", color = "white") +
+  scale_fill_manual(values=c("#d696bb","#56B4E9", "#c9c9ff","#00b159", "#999999","#5d5d5d","#E69F00")) +
+  #scale_fill_brewer(palette = "Dark2", name = "Demultiplexing \n classification") +
+  theme_Publication(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_grid(~Protocol)
+```
+
+
+## As stacked barchart
+
+The size of the overall classification accuracy tibble is small enough that it can be presented as a table.
+
+Visualise the sample specific accuracy
+Because I can't separate the technical replicates using vireo genotypes I cannot visualise the agree on a tag call (e.g HTO_1) basis.
+I can only collapse back to the 4 donor labels.
+
+This is a difficult plot to interpret. I think I am better off with an alluvial plot.
+
+```{r percent_agree, fig.cap = "Using vireo genotypes as ground truth the percent of multiplexing oligos in agreement", fig.asp=1}
+p2 <- ggplot(sample_ocm[sample_ocm$match,], 
+             aes(x = Classification, y=percent, fill = algorithm)) + 
+  geom_bar(position="dodge", stat="identity") + 
+  ylab("Percent agreement genotypes with demultiplexing") + 
+  xlab("SNP genotype assignment") +
+  scale_fill_brewer(palette = "Dark2", name = "Demultiplexing \n classification") +
+  facet_wrap(~Protocol, ncol=1)
+
+p2
+```
+
+# Plot as Sankey, alluvial plots or river plots {.tabset}
+
+https://r-charts.com/flow/sankey-diagram-ggplot2/
+
+The ggalluvial package provides the geom_alluvium and geom_stratum functions to create alluvial diagrams in ggplot2. You will need to pass your data in long format, specify the axis variables inside aes and use the previous functions.
+
+Remove blanks for clarity of the alluvial plot as they are not many points.
+
+```{r}
+alluvial <- tb %>% 
+  filter(mul_Assignment != "Blanks") %>% 
+  filter(mul_Donor != "blank") %>% 
+  dplyr::count(vir_Donor, mul_Donor, mul_Assignment, Protocol)
+```
+
+## MULTI-Seq
+
+```{r alluvial_multiseq, fig.cap="MULTI-Seq"}
+protocol <- "MULTI-Seq"
+current <- alluvial[alluvial$Protocol == protocol,]
+
+am <- ggplot(data = current,
+       aes(axis1=mul_Assignment, axis2=mul_Donor, axis3 = vir_Donor,
+           y = n)) +
+  geom_alluvium(aes(fill = mul_Donor), discern=FALSE) +
+  geom_stratum(discern=FALSE, alpha = 0, width = 1/2, linetype="18") +
+  geom_text(stat = "stratum",
+            aes(label = after_stat(stratum))) +
+   #scale_fill_brewer(palette = "Set3") +
+  theme_void() + theme(legend.position = "none")
+  
+am
+```
+
+## Hashtag antibody
+
+```{r alluvial_hashtag, fig.cap="Hashtag antibody"}
+protocol <- "Hashtag Ab"
+current <- alluvial[alluvial$Protocol == protocol,]
+
+ah <- ggplot(data = current,
+       aes(axis1=mul_Assignment, axis2=mul_Donor, axis3 = vir_Donor,
+           y = n)) +
+  geom_alluvium(aes(fill = mul_Donor), discern=FALSE) +
+  geom_stratum(discern=FALSE, alpha = 0, width = 1/2, linetype="18") +
+  geom_text(stat = "stratum",
+            aes(label = after_stat(stratum))) +
+   #scale_fill_brewer(palette = "Set3") +
+  theme_void() + theme(legend.position = "none")
+
+ah
+```
+
+## CellPlex
+
+```{r alluvial_cellplex, fig.cap="CellPlex"}
+protocol <- "CellPlex"
+current <- alluvial[alluvial$Protocol == protocol,]
+
+ac <- ggplot(data = current,
+       aes(axis1=mul_Assignment, axis2=mul_Donor, axis3 = vir_Donor,
+           y = n)) +
+  geom_alluvium(aes(fill = mul_Donor), discern=FALSE) +
+  geom_stratum(discern=FALSE, alpha = 0, width = 1/2, linetype="18") +
+  geom_text(stat = "stratum",
+            aes(label = after_stat(stratum))) +
+   #scale_fill_brewer(palette = "Set3") +
+  theme_void() + theme(legend.position = "none")
+
+ac
+```
+
+# Plot as BFF cluster alluvial plot
+
+In the manuscript I want to check where the SNP multiplets are being assigned in the good quality MULTI-Seq protocol.
+
+```{r}
+alluvial <- tb %>% 
+  dplyr::count(vir_Donor, chr_bff_cluster, Protocol)
+```
+
+## MULTI-Seq
+
+The multiplets being assigned to singlets are evenly distributed across the donors
+
+```{r alluvial_multiseq_BFF, fig.cap="MULTI-Seq BFF Cluster assignments"}
+protocol <- "MULTI-Seq"
+current <- alluvial[alluvial$Protocol == protocol,]
+
+ambff <- ggplot(data = current,
+       aes(axis1=chr_bff_cluster, axis2 = vir_Donor,
+           y = n)) +
+  geom_alluvium(aes(fill = vir_Donor), discern=FALSE) +
+  geom_stratum(discern=FALSE, alpha = 0, width = 1/2, linetype="18") +
+  geom_text(stat = "stratum",
+            aes(label = after_stat(stratum))) +
+   #scale_fill_brewer(palette = "Set3") +
+  theme_void() + theme(legend.position = "none")
+
+ambff
+```
+
+# Agreement of cellhashR demultiplexing algorithms
+
+I'm trying to reporduce a figure like:
+[CellHashR vignette](https://bimberlab.github.io/cellhashR/articles/V03-Benchmark-example.html)
+
+I assume the RNA category is the SNP genotypes.
+
+The algorithms run by cellhashR are:
+
+* bff_cluster
+* gmm_demux
+* multiseq 
+* htodemux
+* dropletutils
+
+First convert to long tibble
+
+```{r chr_long_tb, warning=FALSE}
+long_tb <- read_csv(here::here(
+  "/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo", "longTB_unified.csv.gz"
+))
+
+long_tb$Protocol <- recode(long_tb$Protocol,
+                       HTO = "Hashtag Ab",
+                       LMO = "MULTI-Seq",
+                       CMO = "CellPlex")
+
+cells <- str_split(long_tb$cell_id, pattern = "_", simplify = TRUE)[,1]
+cells  <- paste(cells, long_tb$Protocol, sep = "_")
+```
+
+Remove homotypic doublets
+
+```{r}
+long_tb_all <- long_tb
+
+remove_cells <- paste(homo_doublets$cell_barcode, homo_doublets$Protocol, sep = "_")
+
+long_tb <- long_tb[!cells %in% remove_cells,]
+
+long_tb %>% 
+  select(Protocol:dmx_Call,Donor) %>% 
+  head(10) %>% 
+  kable()
+```
+
+# Plot calls from different demultiplexing algorithms {.tabset}
+
+## Percent calls in a capture by algorithm
+
+Count within each capture the proportion of calls
+
+```{r percent_cap_tbl}
+chr_per_cap <- long_tb %>% 
+  dplyr::count(Donor, Protocol, Algorithm) %>%
+  group_by(Protocol, Algorithm) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(percent))
+
+chr_per_cap %>% 
+  head() %>% 
+  kable()
+
+unique(chr_per_cap$Algorithm)
+chr_per_cap$Algorithm <- recode(chr_per_cap$Algorithm,
+                                chr_gmm_demux="GMM Demux",
+                                chr_multiseq = "deMULTIplex",
+                                chr_bff_cluster = "BFF cluster",
+                                vir_Donor = "SNP",
+                                chr_htodemux = "srt HTODemux",
+                                mul_Assignment = "Cell Ranger",
+                                chr_dropletutils = "DropletUtils"
+                                )
+```
+
+Check the unassigned percentage
+
+```{r}
+chr_per_cap %>% 
+  filter(Donor == "unassigned") %>% 
+  filter(Algorithm == "Cell Ranger") %>% 
+  kable()
+```
+
+
+```{r percent_cap_plt, fig.cap = "Within each capture (Protocol) the proportion of the different calls is reprersented as a percent of all cells"}
+p2 <- ggplot(chr_per_cap, 
+             aes(x = Algorithm, y= percent, fill = Donor)) + 
+  geom_bar(position = position_stack(reverse = TRUE),
+           stat="identity") + 
+  ylab("Percent of capture") + 
+  xlab("Algorithm") +
+    scale_y_continuous(breaks=seq(0,100,20)) +
+  scale_fill_brewer(palette = "Dark2", name = "Demultiplexing \n classification") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=12)) +
+  facet_grid(~Protocol)
+
+p2
+```
+
+# CellhashR calls and vireo agreement True False
+
+Make a simple plot where the agreement with Vireo is expressed as a simple TRUE FALSE.
+Remove homotypic doublets
+
+```{r homoDoublets}
+long_snp <- read_csv("/stornext/Projects/score/Analyses/R010_multiplexing/Matrices/PBMC/vireo/longTB_bySNP.csv.gz")
+long_snp$Protocol <- recode(long_snp$Protocol,
+                          HTO = "Hashtag Ab",
+                          LMO = "MULTI-Seq",
+                          CMO = "CellPlex")
+long_snp_all <- long_snp
+
+cells <- str_split(long_snp$cell_id, pattern = "_", simplify = TRUE)[,1]
+cells  <- paste(cells, long_snp$Protocol, sep = "_")
+long_snp <- long_snp[!cells %in% remove_cells,]
+long_snp$Vireo_Match <- long_snp$vir_Donor == long_snp$Donor
+```
+
+Compute classification accuracy
+
+```{r TF_agree}
+chr_tf <- long_snp %>% 
+  select(!dmx_Call) %>% 
+  dplyr::count(Vireo_Match, Protocol, Algorithm) %>%
+  group_by(Protocol, Algorithm) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(percent))
+
+chr_tf$Algorithm <- recode(chr_tf$Algorithm,
+                                chr_gmm_demux="GMM Demux",
+                                chr_multiseq = "deMULTIplex",
+                                chr_bff_cluster = "BFF cluster",
+                                chr_htodemux = "srt HTODemux",
+                                mul_Assignment = "Cell Ranger",
+                                chr_dropletutils = "DropletUtils"
+                                )
+
+chr_tf %>% 
+  head() %>% 
+  kable()
+```
+
+## Plot percent agreement with Vireo
+
+```{r percent_agree_tf, fig.cap="Simple representation of if the algorithm call is consistent with vireo SNP genotypes. Unassigned cells are included"}
+p3 <- ggplot(chr_tf, 
+             aes(x = Algorithm, y=percent, fill = Vireo_Match)) + 
+  geom_bar(position = position_stack(reverse = TRUE),
+           stat="identity") + 
+  ylab("Percent of capture") + 
+  xlab("Algorithm") +
+  scale_y_continuous(breaks=seq(0,100,10)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=12)) +
+  scale_fill_brewer(palette = "Set1", name = "Match with SNP") +
+  facet_grid(~Protocol)
+
+p3
+```
+
+## Plot the number of missclassified singlets
+
+To put the focus on cells that have been assigned to one donor by sample multiplexing but assigned to a different donor by SNPs.
+
+```{r}
+misclass_sing <- long_snp %>% 
+  filter(Donor != "unassigned") %>%
+  filter(Donor != "multiplet") %>%
+  select(!dmx_Call) %>% 
+  dplyr::count(Vireo_Match, Protocol, Algorithm) %>%
+  group_by(Protocol, Algorithm) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  filter(Vireo_Match == FALSE) %>%
+  arrange(desc(percent))
+
+misclass_sing$Algorithm <- recode(misclass_sing$Algorithm,
+                                chr_gmm_demux="GMM Demux",
+                                chr_multiseq = "deMULTIplex",
+                                chr_bff_cluster = "BFF cluster",
+                                chr_htodemux = "srt HTODemux",
+                                mul_Assignment = "Cell Ranger",
+                                chr_dropletutils = "DropletUtils"
+                                )
+```
+
+
+```{r percent_agree_donor}
+p4 <- ggplot(misclass_sing, 
+             aes(x = Algorithm, y= n, colour = Protocol)) + 
+  geom_jitter(size=2, width = 0.1, alpha=1) +
+  ylab("Misclassified \nsinglets") + 
+  xlab("") + 
+  scale_color_brewer(palette = "Dark2", name = "Protocol") +
+  scale_shape(name="Protocol") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+p4
+```
+
+
+# Agreement of singlet, multiplet unassigned calls
+
+Another simple representation of the data is a breakdown of singlet, doublet and unassigned calls.
+
+Determine if a particular kind of call such as multiplet is underestimated by vireo.
+
+```{r print_cc_table}
+long_tb$cell_call <- long_tb$Donor
+long_tb$cell_call <- recode(long_tb$cell_call,
+       VBDR1233 = "singlet",
+       VBDR1206 = "singlet",
+       VBDR1216 = "singlet",
+       VBDR1186 = "singlet")
+
+long_tb$Algorithm <- recode(long_tb$Algorithm,
+                                chr_gmm_demux="GMM Demux",
+                                chr_multiseq = "deMULTIplex",
+                                chr_bff_cluster = "BFF cluster",
+                                chr_htodemux = "srt HTODemux",
+                                mul_Assignment = "Cell Ranger",
+                                chr_dropletutils = "DropletUtils",
+                                vir_Donor = "SNP"
+                                )
+
+chr_cc <- long_tb %>% 
+  select(!Donor) %>% 
+  dplyr::count(cell_call, Protocol, Algorithm) %>%
+  group_by(Protocol, Algorithm) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(percent))
+
+chr_cc$Algorithm <- as.factor(chr_cc$Algorithm)
+chr_cc <- chr_cc %>% 
+  mutate(Algorithm = fct_relevel(Algorithm, c("SNP", "Cell Ranger", "BFF cluster", "srt HTODemux", "DropletUtils", "deMULTIplex")))
+
+chr_cc %>% 
+  head() %>% 
+  kable()
+```
+
+## Plot singlet multiplet and unassigned
+
+```{r percent_agree_cc, fig.cap="The donor assignments have been collapsed into a singlet call. Examine if it is indeed the multiplet rate that is ressponsible for the variation in calls between algorithms"}
+p5 <- ggplot(chr_cc, 
+             aes(x = Algorithm, y=percent, fill = cell_call)) + 
+  geom_bar(position = position_stack(reverse = TRUE),
+           stat="identity") + 
+  ylab("Percent of capture") + 
+  xlab("Cell demulltiplexing algorithm") +
+  geom_hline(yintercept=16.6, linetype="dashed", color = "black") +
+  scale_fill_manual(values=c("#E69F00", "#56B4E9", "#999999")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=12)) +
+  facet_grid(~Protocol)
+
+p5
+```
+
+# Conclusion
+
+MULTI-Seq is the best protocol. There are more doublets called than theoretically should exist
+
+* 20% vs 16.11%
+
+For algorithms Cell Ranger is the most consistent.
+BFF cluster works best in CellPlex where a strong normalisation is needed.
+
+## Next steps
+
+Calculate sensitivity and specificity and present as a table:
+
+Sensitivity refers to the true positive rate and summarizes how well the positive class was predicted.
+
+* Sensitivity = TruePositive / (TruePositive + FalseNegative)
+    + Specificity is the complement to sensitivity, or the true negative rate, and summarises how well the negative class was predicted.
+
+* Specificity = TrueNegative / (FalsePositive + TrueNegative)
+    + For imbalanced classification, the sensitivity might be more interesting than the specificity.
+
+Sensitivity and Specificity can be combined into a single score that balances both concerns, called the geometric mean or G-Mean.
+
+G-Mean = sqrt(Sensitivity * Specificity)
+
+### Session Info
+
+```{r}
+sessionInfo()
+```

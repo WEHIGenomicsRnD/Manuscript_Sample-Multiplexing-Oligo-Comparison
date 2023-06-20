@@ -1,0 +1,21 @@
+[gene-expression]
+reference,/stornext/Projects/score/Indexes/refdata-gex-GRCh38-2020-A
+cmo-set,/stornext/Projects/score/2021_Sequencing_Runs/NN239/samplesheets/R010_DB/LMO_Feature_Ref.csv
+
+[libraries]
+fastq_id,fastqs,feature_types
+R010_LMO_GEX,/stornext/Projects/score/2021_Sequencing_Runs/NN232/fastq/HWWHLBGXJ,Gene Expression
+R010_LMO_GEX,/stornext/Projects/score/2021_Sequencing_Runs/NN236/fastq/demux_fastq,Gene Expression
+R010_LMO_LMO,/stornext/Projects/score/2021_Sequencing_Runs/NN232/fastq/HWWHLBGXJ,Multiplexing Capture
+R010_LMO_LMO,/stornext/Projects/score/2021_Sequencing_Runs/NN239/nn239_fastq,Multiplexing Capture
+
+[samples]
+sample_id,cmo_ids
+VBDR1233_Rep-One_MULTI_2,MULTI_2
+VBDR1233_Rep-Two_MULTI_3,MULTI_3
+VBDR1206_Rep-One_MULTI_4,MULTI_4
+VBDR1206_Rep-Two_MULTI_5,MULTI_5
+VBDR1186_Rep-One_MULTI_6,MULTI_6
+VBDR1186_Rep-Two_MULTI_7,MULTI_7
+VBDR1216_Rep-One_MULTI_8,MULTI_8
+VBDR1216_Rep-Two_MULTI_9,MULTI_9

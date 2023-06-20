@@ -1,0 +1,14 @@
+name,Vendor,Detection,replicate
+MULTI_Seq_A594_only_002.fcs,ALL,A594,1
+MULTI_Seq_A647_only_003.fcs,ALL,A647,1
+MULTI_Seq_DAPI_only_004.fcs,NA,NA,1
+MULTI_Seq_GLK_001_011.fcs,Genelink,A594_A647,1
+MULTI_Seq_GLK_002_012.fcs,Genelink,A594_A647,2
+MULTI_Seq_GLK_003_013.fcs,Genelink,A594_A647,3
+MULTI_Seq_MGN_001_005.fcs,McGinnis,A594_A647,1
+MULTI_Seq_MGN_002_006.fcs,McGinnis,A594_A647,2
+MULTI_Seq_MGN_003_007.fcs,McGinnis,A594_A647,3
+MULTI_Seq_SIG_001_008.fcs,SigmaMerck,A594_A647,1
+MULTI_Seq_SIG_002_009.fcs,SigmaMerck,A594_A647,2
+MULTI_Seq_SIG_003_010.fcs,SigmaMerck,A594_A647,3
+MULTI_Seq_unstained_001.fcs,NA,NA,1

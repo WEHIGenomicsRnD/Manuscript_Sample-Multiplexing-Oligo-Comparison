@@ -1,0 +1,7 @@
+name,Reagent,Dilution,PostLabel,PI
+Mab414_hundred_dil_003.fcs,Mab414,100,1,FALSE
+Mab414_neat_001.fcs,Mab414,1,1,FALSE
+Mab414_ten_dil_002.fcs,Mab414,10,1,FALSE
+Mab414_hundred_PI_30_006.fcs,Mab414,100,30,TRUE
+Mab414_neat_PI_30_004.fcs,Mab414,1,30,TRUE
+Mab414_ten_PI_30_005.fcs,Mab414,10,30,TRUE

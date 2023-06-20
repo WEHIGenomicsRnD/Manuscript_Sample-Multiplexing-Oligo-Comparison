@@ -1,0 +1,464 @@
+---
+title: "Titrate CellPlex reagent by FACS"
+description: |
+  Titrate CellPlex reagent
+author: "Daniel Brown, Casey Antilla and Ling Ling"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=8, fig.asp=0.618, 
+                      fig.path='./Figures/cellplex/',
+                      warning=FALSE, message=FALSE,
+                      layout="l-body-outset")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = here::here())
+library(flowCore)
+library(ggcyto)
+library(knitr)
+library(tidyverse)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Installation
+Follow the guidelines of 
+https://jchellmuth.com/posts/FACS-with-R/
+
+```{r, eval=FALSE}
+BiocManager::install(c("flowCore", "ggcyto"))
+```
+
+# Experimental details
+
+## CellPlex titration
+In a comparision experiment with PBMCs CellPlex performed the worst. It had a high background, perhaps due to an excess of reagent being added. The amplified material was extremely high compared to other protocols.
+
+## Hashtag storage
+After Melanie Neeland’s experiment want to check how long HTOss can be stored after dilution.
+
+# Read and format .fcs data
+The read.flowSet allows you to read many .fcs at once. The resultant flowSet object will store the data from all these .fcs files.
+
+```{r, include=TRUE}
+list.files(here::here(
+  "data/FACS/211019_CellPlex_dil"
+  ))
+
+fs <- read.flowSet(path = here::here(
+  "data/FACS/211019_CellPlex_dil"
+  ),
+  pattern = "*.fcs",
+  alter.names = T)
+```
+
+Sample information (aka phenotypic data) such as sample names can be accessed with the pData function. The default sample names are not very useful. So, let’s extract the sample name.
+
+## Mung sample names
+
+Daniel had to make this samplesheet himself. Not sure what the correct controls are.
+
+```{r}
+samples <- read_csv(here::here(
+  "metadata/FACS/211019_CellPlex_dil", "samplesheet.csv"
+))
+  
+samples$concentration <- ordered(samples$concentration, 
+    levels = c("0", "1", "2", "3", "5", "10", "20", "50","100"
+               ))
+
+pData(fs)$label <- samples$label
+pData(fs)$concentration <- samples$concentration
+pData(fs)$replicate <- samples$replicate
+pData(fs)$storage <- samples$storage
+pData(fs)$sample <- paste(samples$label, 
+                          "dil",samples$concentration,
+                          "rep",samples$replicate, 
+                          "store", samples$storage,
+                          sep="-")
+
+pData(fs) %>% 
+  kable()
+```
+
+# Questions for Casey
+
+* Whats the difference between 19Oct21_Unstained PI.fcs and 19Oct21_Unstained V.fcs?
+* Why do the hastag samples have PI in their filename?
+* What was the viability dye and was compensation performed?
+
+The channel namess are given below:
+
+## Answers
+
+The extra files come from the DAPI not working properly. The unstained PI goes with the HashTag samples and with PI as the live/dead marker. I added PI to the hashtag samples to work out what that higher population was. Turns out that was all the dead cells. When I added PI to the CellPlex samples, because the A647 was so bright, it bled into everything and made a big mess, so I just added 3 times the DAPI instead. Even with 3 times the amount in, the staining for the dead cells was really weak.
+
+The unstained V goes with the CellPlex samples. I turned the voltage down by ~60 to try and get the positives somewhat on scale.
+
+So HashTag = PI with unstained PI as the negative control, CellPlex = DAPI with unstained V as the negative. No compensation for anything.
+
+Hope that makes sense
+
+Casey
+
+```{r}
+colnames(fs) %>% 
+  kable()
+```
+
+## Convert to Gating set object
+To be able to add gates, the flowSet has to be transformed to a GatingSet object with the GatingSet function
+
+```{r}
+gs <- GatingSet(fs)
+```
+
+If you want to check where the singlets you filtered out show up in FSC vs SSC (the plot that is typically used to remove debris or gate live cells), you can do this by setting different subets in the ggcyto command (‘root’ or ‘Singlets’).
+
+# Gating strategy {.tabset}
+
+## Debris gate
+
+The axis limits are set by the instrument. Use FSC.H,y=SSC.H
+
+```{r}
+ggcyto(gs[[1]], 
+       aes(x=FSC.H,y=SSC.H), subset="root") + 
+  geom_hex(bins = 200) + 
+  ggcyto_par_set(limits = "instrument") + 
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 12))
+```
+
+### Define the gate
+check the gate in a plot (before adding it to the gating set)
+if the gate seems right, add / apply it to the gating set
+recompute the gatingSet to have statistics available.
+
+Its much easier to draw rectangle gates than polygon gates in R.
+
+```{r}
+# define gate
+g.debris <- rectangleGate(filterId = "noDebris",
+                          "FSC.H"=c(2.e4,7e4),
+                          "SSC.H"=c(1.5e4,7e4)) 
+
+# check gate
+ggcyto(gs[[12]],aes(x=FSC.H,y=SSC.H) ,subset="root") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.debris) + 
+  ggcyto_par_set(limits = "instrument") + 
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 12))
+```
+
+### Gate the cells
+
+```{r}
+gs_pop_add(gs,g.debris) # add gate to GatingSet
+recompute(gs)
+```
+
+```{r debris_gate, fig.height=20, fig.width=12, fig.cap = "Debris gate"}
+ggcyto(gs,aes(x=FSC.H,y=SSC.H), 
+       subset="noDebris") + 
+  geom_hex(bins = 100) + 
+  geom_gate("noDebris") +
+  geom_stats(adjust = 0.8) + 
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8)) +
+  facet_wrap(~sample, ncol = 3)
+```
+
+## Singlet gate
+
+Drawing the polygon gate is a real pain, I have to manually type numberss in.
+
+### Define the gate
+check the gate in a plot (before adding it to the gating set)
+if the gate seems right, add / apply it to the gating set
+recompute the gatingSet to have statistics available
+
+```{r}
+# define gate
+g.singlets <- polygonGate(filterId = "Singlets",
+                           "FSC.A"=c(3e4,2.2e5,1e5,3e4),
+                           "FSC.H"=c(2e4,6e4,6e4,2e4)) 
+
+# check gate
+ggcyto(gs[[9]],aes(x=FSC.A,y=FSC.H) ,subset="noDebris") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.singlets) + 
+  #ggcyto_par_set(limits = "instrument") + 
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 12))
+```
+
+### Gate the cells
+
+```{r}
+gs_pop_add(gs,g.singlets,
+           parent="noDebris") # add gate to GatingSet
+
+recompute(gs)
+```
+
+overview plots at each gating step.
+
+```{r singlet_gate, fig.height=20, fig.width=12, fig.cap = "Singlet gate"}
+ggcyto(gs,aes(x=FSC.A,y=FSC.H), 
+       subset="noDebris") + 
+  geom_hex(bins = 200) + 
+  geom_gate("Singlets") +
+  geom_stats(adjust = 0.8) + 
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8)) +
+  facet_wrap(~sample, ncol = 5)
+```
+
+## Live cell gate
+
+I'm unsure if PI or DAPI is the viability dye. Use DAPI because spectral overlap means PI is useless without compensation.
+
+Gating steps are as above. Differentiating live and dead cells solely based on DAPI exclusion.
+
+```{r}
+g.live <- rectangleGate(filterId = "Live",
+                      "FSC.A"=c(7e4,2e5),
+                      "V450.50.A"=c(50,6e2)) # define gate
+
+# Add biexponential axis
+ggcyto(gs[[1]], aes(x=FSC.A,y=`V450.50.A`),
+       subset="Singlets") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.live) + 
+  scale_y_flowjo_biexp() +
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 12))
+```
+
+### Gating out dead cells
+
+```{r}
+gs_pop_add(gs, 
+    g.live, 
+    parent="Singlets") # add gate to GatingSet
+
+recompute(gs)
+```
+
+```{r live_gate, fig.height=20, fig.width=12, fig.cap = "Live gate"}
+ggcyto(gs,aes(x=FSC.A,y=`V450.50.A`),
+       subset="Singlets") + 
+  geom_hex(bins = 200) + 
+  geom_gate("Live") +
+  geom_stats(adjust = 0.8) + 
+  scale_y_flowjo_biexp() +
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8)) +
+  facet_wrap(~sample, ncol = 4)
+```
+
+# Check spectral overlap Red channels
+
+Its clear here that PI and A647 are spilling over.  
+Without compensation can't use Y610 PI channel. There does not appear to be a A647 (feature barcode only) control.
+
+Will gate out excessive PI signal as it confounds downstream plots.
+
+```{r}
+g.pi <- rectangleGate(filterId = "PI",
+                      "R660.20.A"=c(-1e5,2.55e5),
+                      "Y610.20.A"=c(-1e5,1e6)) # define gate
+
+ggcyto(gs[[9]],aes(x=R660.20.A, y=Y610.20.A),
+       subset="Live") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.pi) +
+  scale_y_flowjo_biexp() + scale_x_flowjo_biexp() +
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8)) +
+  facet_wrap(~sample, ncol = 4)
+```
+
+### Gating out PI confounding cells
+
+```{r}
+gs_pop_add(gs, 
+    g.pi, 
+    parent="Live") # add gate to GatingSet
+
+recompute(gs)
+```
+
+```{r pi_gate, fig.height=20, fig.width=12, fig.cap = "PI gate"}
+ggcyto(gs,aes(x=R660.20.A, y=Y610.20.A),
+       subset="Live") + 
+  geom_hex(bins = 200) + 
+  geom_gate("PI") +
+  geom_stats(adjust = 0.8) + 
+  scale_y_flowjo_biexp() +
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8)) +
+  facet_wrap(~sample, ncol = 4)
+```
+
+# Set Alexa 647+ feature barocde detection oligo
+
+This looks like the best control to use to set the gate.
+* Unstained PI sample
+
+```{r}
+g.a647 <- rectangleGate(filterId="FB2 positive",
+                       "R660.20.A"=c(500, Inf)) # set gate
+
+ggcyto(gs[[12]],
+       aes(x="R660.20.A"), subset="PI") + 
+  geom_density(fill="rosybrown") + 
+  geom_gate(g.a647) + 
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() + 
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 12))
+```
+
+## Add gate
+
+```{r}
+gs_pop_add(gs, g.a647, parent="PI") # add gate to GatingSet
+recompute(gs) # recalculate Gatingset
+```
+
+# Visualise Alexa 647 signal {.tabset}
+
+## By Dilution
+
+```{r, include=FALSE}
+pData(gs)$sample
+# Subset only the relevant columns
+
+gs_subset <- gs[c(1:9,12),]
+
+pData(gs_subset)$concentration <- ordered(pData(gs_subset)$concentration, 
+    levels = c("0", "1", "2", "3", "5", "10", "20", "50","100"))
+```
+
+Make overlay plot
+
+scale_fill_discrete(limits=c("1", "2", "5", "10", "50", "100", "0"))
+
+```{r FB2_dil_gate, fig.cap = "Alexa 647 gate by replicate"}  
+ggcyto(gs_subset, aes(x=`R660.20.A`, fill=concentration), 
+       subset="PI",) + 
+  geom_density(alpha=0.33) + 
+  geom_gate("FB2 positive") +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  facet_grid(~storage) +
+  ggtitle("") +
+  xlab("Feature barcode detection oligo") +
+  ggtitle("") +
+  scale_fill_discrete(limits=c("1", "2", "3", "5", "10","20", "50", "100", "0")) +
+  scale_colour_Publication() + theme_Publication(base_size=20) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## All samples
+
+```{r FB2_gate, fig.height=20, fig.width=12, fig.cap = "Alexa 647 gate"}
+ggcyto(gs, aes(x=`R660.20.A`), 
+       subset="PI",) + 
+  geom_density(fill="rosybrown") + 
+  geom_gate("FB2 positive") +
+  geom_stats(adjust = 0.99, digits = 5) +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  facet_wrap(~sample , ncol = 5) +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 12))
+```
+
+# Compare Hashtag with CellPlex
+
+
+```{r}
+pData(gs)$sample
+# Subset only the relevant columns
+
+gs_subset <- gs[c(1,10:12),]
+```
+
+Make overlay plot
+
+```{r FB2_prot_gate, fig.height=20, fig.width=12, fig.cap = "Alexa 647 gate by replicate"}  
+ggcyto(gs_subset, aes(x=`R660.20.A`, fill=sample), 
+       subset="PI",) + 
+  geom_density(alpha=0.33) + 
+  geom_gate("FB2 positive") +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  facet_wrap(~replicate) +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+# Get populations stats for downstream analysis
+To get the data from each gating step from the GatingSet, we can use the getPopStats function.
+
+```{r}
+gs_pop_get_count_fast(gs) %>% 
+  head %>% 
+  kable()
+
+ps <- as_tibble(gs_pop_get_count_fast(gs))
+```
+
+We can now easily calculate the ‘percent of parent’ (a common metric in FACS analysis).
+
+```{r}
+ps$percent_of_parent <- ps$Count/ps$ParentCount
+```
+
+If we want to retain any Pheno Data from the initial flowSet, we can use a simple merge (here, we only have well information).  
+Can plot summary statistics with this tibble.  
+
+```{r}
+psm <- left_join(ps,pData(fs),
+                 by=c("name" = "name"))
+```
+
+# Conclusion
+
+The CellPlex reagent can be diluted 1:10, at least for 500k cells.
+This is what we do for the Total-Seq A hashtags.
+
+The signal for hastags is at least 10 fold less than CellPlex. I think we should reduce the dilution and use more hashtag antibody.
+
+### Cleanup
+```{r}
+write_csv(psm, here::here(
+  "data/FACS/211019_CellPlex_dil", "population_stats.csv"
+  ), quote = "none")
+
+sessionInfo()
+```

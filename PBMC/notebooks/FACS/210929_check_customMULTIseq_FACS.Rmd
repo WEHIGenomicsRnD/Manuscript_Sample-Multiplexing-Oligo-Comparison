@@ -1,0 +1,395 @@
+---
+title: "Check MULTI-Seq lipid oligo binding by FACS"
+description: |
+  Check reagents before commiting to expensive 10x Genomics experiments
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=8, fig.asp=0.618, 
+                      fig.path='./Figures/nxtCMO/',
+                      warning=FALSE, message=FALSE,
+                      layout="l-body-outset")
+```
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = here::here())
+library(flowCore)
+library(ggcyto)
+library(tidyverse)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Installation
+Follow the guidelines of 
+https://jchellmuth.com/posts/FACS-with-R/
+
+```{r, eval=FALSE}
+BiocManager::install(c("flowCore", "ggcyto"))
+```
+
+# Experimental details
+I have been using MULTI-Seq LMO oligos from Chris McGinnis. This worked well in a comparison experiment on PBMCs but is a finite resource. I order MULTI-Seq oligos from Genelink with the same sequence as Chris McGinnis. I also ordered a custom oligo with CellPlex sequences.  
+
+Reagents to test:  
+
+50uM MULTI-Seq LMO from Chris McGinnis
+1.  McGinnis LMO. This is what we used in the past.
+MULTI-Seq LMO from Genelink
+2.  Cat LMO is the same sequences as McGinnis
+Custom LMO from Genelink
+3.  Nextera LMO
+4.  Custom CMO from IDT
+Nextera CMO
+Conduct the experiment in triplicate = 12 tubes.
+
+# Read and format .fcs data
+The read.flowSet allows you to read many .fcs at once. The resultant flowSet object will store the data from all these .fcs files.
+
+```{r}
+fs <- read.flowSet(path = here::here(
+  "data/FACS/210929_check_customMULTIseq"
+  ),
+  pattern = ".fcs",alter.names = T)
+```
+
+Sample information (aka phenotypic data) such as sample names can be accessed with the pData function. The default sample names are not very useful. So, let’s extract the sample name.
+
+## Mung sample names
+
+```{r}
+# extract well from name and add new 'well' column
+samples <- sampleNames(fs)
+
+samples_df <- as.data.frame(
+  str_split(samples, "_", simplify = TRUE)[,c(3:5)]
+)
+samples_name <- paste(samples_df$V1, samples_df$V2, samples_df$V3,
+                 sep = "_")
+
+# Name the controls that don't spilt well
+samples_name[1] <- "DAPI_only"
+samples_name[17] <- "Unstained"
+
+pData(fs)$sample <-samples_name
+pData(fs)$replicate <- str_split(pData(fs)$sample, "_", simplify = TRUE)[,3]
+pData(fs)$source <- str_split(pData(fs)$sample, "_", simplify = TRUE)[,1]
+pData(fs)$lipid <- str_split(pData(fs)$sample, "_", simplify = TRUE)[,2]
+
+pData(fs)
+```
+
+The default channel names on most FACS machines are useless and changing them there is often tedious.  
+Below is a quick and simple way to change the channel names for the entire flowSet. This makes coding easier and will result in proper axis labels in your plots.
+
+```{r}
+colnames(fs)
+
+colnames(fs)[colnames(fs)=="APC.A"] <- "Alexa 647"
+colnames(fs)[colnames(fs)=="DAPI.A"] <- "DAPI"
+```
+
+## Convert to Gating set object
+To be able to add gates, the flowSet has to be transformed to a GatingSet object with the GatingSet function
+
+```{r}
+gs <- GatingSet(fs)
+```
+
+If you want to check where the singlets you filtered out show up in FSC vs SSC (the plot that is typically used to remove debris or gate live cells), you can do this by setting different subets in the ggcyto command (‘root’ or ‘Singlets’).
+
+# Set debris gate
+
+There are automatic singlet gating commands available, e.g. flowStats::gate_singlet. However, I generally find manual gating more reliable. As with all gating steps below, setting the gates can be tedious in R as opposed to interactive gating with FlowJo. However, if you usually use similar cells or cell lines and keep the voltage settings on your machine constant, you really only have to set these gates once. After that, all you may have to do is tweak the gates a little. The basic steps I take for each of the gatings below are:
+
+```{r}
+ggcyto(gs[[1]], 
+       aes(x=FSC.H,y=SSC.H), subset="root") + 
+  geom_hex(bins = 200) + 
+  ggcyto_par_set(limits = "instrument") + 
+  theme_bw(base_size = 20) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Define the gate
+check the gate in a plot (before adding it to the gating set)
+if the gate seems right, add / apply it to the gating set
+recompute the gatingSet to have statistics available
+
+```{r}
+# define gate
+g.debris <- rectangleGate(filterId = "noDebris",
+                          "FSC.H"=c(1e4,2.5e5),
+                          "SSC.H"=c(2e4,2.4e5)) 
+
+# check gate
+ggcyto(gs[[1]],aes(x=FSC.H,y=SSC.H) ,subset="root") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.debris) + 
+  #ggcyto_par_set(limits = "instrument") + 
+  theme_bw(base_size = 20) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Gate the cells
+
+```{r}
+gs_pop_add(gs,g.debris) # add gate to GatingSet
+recompute(gs)
+```
+
+Now comes the fun part where R works so much better than FlowJo: plotting the data for all samples at once. This is based on ggplot’s facet_wrap command (included by default in ggcyto when using even if you don’t explicitly call that command).  
+If we now use the ‘sample’ column with facet_wrap, we’ll get meaningful titles for each plot.  
+Although you might not use this overview plot for any kind of publication (espcially not something boring like your singlet gate), this kind of plot allows you to immediately spot any issues with certain samples (dead cells, clumped cells, technical errors with your FACS machine).  
+Thus, I recommend generating these overview plots at each gating step.
+
+```{r debris_gate, fig.height=20, fig.width=12, fig.cap = "Debris gate"}
+ggcyto(gs,aes(x=FSC.H,y=SSC.H), 
+       subset="noDebris") + 
+  geom_hex(bins = 100) + 
+  geom_gate("noDebris") +
+  geom_stats(adjust = 0.8) + 
+  ggcyto_par_set(limits = "instrument") +
+  theme_bw(base_size = 14) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~sample, ncol = 4)
+```
+
+# Set singlet gate
+There are automatic singlet gating commands available, e.g. flowStats::gate_singlet. However, I generally find manual gating more reliable. As with all gating steps below, setting the gates can be tedious in R as opposed to interactive gating with FlowJo. However, if you usually use similar cells or cell lines and keep the voltage settings on your machine constant, you really only have to set these gates once. After that, all you may have to do is tweak the gates a little. The basic steps I take for each of the gatings below are:
+
+## Define the gate
+check the gate in a plot (before adding it to the gating set)
+if the gate seems right, add / apply it to the gating set
+recompute the gatingSet to have statistics available
+
+```{r}
+# define gate
+g.singlets <- polygonGate(filterId = "Singlets",
+                           "FSC.A"=c(1e4,2.5e5,20e4,2e4),
+                           "FSC.H"=c(0,8e4,13e4,2e4)) 
+
+# check gate
+ggcyto(gs[[1]],aes(x=FSC.A,y=FSC.H) ,subset="noDebris") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.singlets) + 
+  ggcyto_par_set(limits = "instrument") + 
+  theme_bw(base_size = 20) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Gate the cells
+
+```{r}
+gs_pop_add(gs,g.singlets,
+           parent="noDebris") # add gate to GatingSet
+
+recompute(gs)
+```
+
+overview plots at each gating step.
+
+```{r singlet_gate, fig.height=20, fig.width=12, fig.cap = "Singlet gate"}
+ggcyto(gs,aes(x=FSC.A,y=FSC.H), 
+       subset="noDebris") + 
+  geom_hex(bins = 200) + 
+  geom_gate("Singlets") +
+  geom_stats(adjust = 0.8) + 
+  ggcyto_par_set(limits = "instrument") +
+  theme_bw(base_size = 14) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~sample, ncol = 4)
+```
+
+# Set live gate
+Gating steps are as above. Differentiating live and dead cells solely based on DAPI exclusion.
+
+```{r}
+g.live <- rectangleGate(filterId = "Live",
+                      "FSC.A"=c(1e4,2.6e5),
+                      "DAPI"=c(100,1e3)) # define gate
+
+# Add biexponential axis
+ggcyto(gs[[1]], aes(x=FSC.A,y=DAPI),
+       subset="Singlets") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.live) + 
+  scale_y_flowjo_biexp() +
+  ggcyto_par_set(limits = "instrument") +
+  theme_bw(base_size = 14) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Gating out dead cells
+
+```{r}
+gs_pop_add(gs, 
+    g.live, 
+    parent="Singlets") # add gate to GatingSet
+
+recompute(gs)
+```
+
+```{r live_gate, fig.height=20, fig.width=12, fig.cap = "Live gate"}
+ggcyto(gs,aes(x=FSC.A,y=DAPI),
+       subset="Singlets") + 
+  geom_hex(bins = 200) + 
+  geom_gate("Live") +
+  geom_stats(adjust = 0.8) + 
+  scale_y_flowjo_biexp() +
+  ggcyto_par_set(limits = "instrument") +
+  theme_bw(base_size = 14) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~sample, ncol = 4)
+```
+
+# Set Alexa 647+ gate
+Because we are only looking at one channel (Alexa 647) for the next gating step, we can now switch to density plots instead of the hex plots above.  
+These are faster to generate, simpler to look at and need less storage.
+
+```{r}
+g.a647 <- rectangleGate(filterId="A647 positive",
+                       "Alexa 647"=c(500, Inf)) # set gate
+
+ggcyto(gs[[1]],
+       aes(x=`Alexa 647`), subset="Live") + 
+  geom_density(fill="rosybrown") + 
+  geom_gate(g.a647) + 
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() + 
+  theme_bw(base_size = 20) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Add gate
+
+```{r}
+gs_pop_add(gs, g.a647, parent="Live") # add gate to GatingSet
+recompute(gs) # recalculate Gatingset
+```
+
+## Visualise Alexa 647 signal {.tabset}
+
+### All samples
+
+The reagents from Genelink do not work robustly.  
+
+```{r FB2_gate, fig.height=20, fig.width=12, fig.cap = "Alexa 647 gate"}
+ggcyto(gs, aes(x=`Alexa 647`), 
+       subset="Live",) + 
+  geom_density(fill="rosybrown") + 
+  geom_gate("A647 positive") +
+  geom_stats(adjust = 0.99, digits = 3) +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  facet_wrap(~sample , ncol = 4) +
+   scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8))
+```
+
+## By replicate
+
+```{r FB2_re_gate, fig.cap = "Alexa 647 gate by replicate"}
+pData(gs)$treatment <- paste(pData(gs)$source, pData(gs)$lipid, sep="-")
+# Subset only the relevant columns
+drop_sample <-c("Unstained-", "spikeNeg") 
+gs_subset <- gs[c(1:7,9:11,13:15),]
+  
+ggcyto(gs_subset, aes(x=`Alexa 647`, fill=replicate), 
+       subset="Live",) + 
+  geom_density(alpha=0.5) + 
+  geom_gate("A647 positive") +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  facet_wrap(~treatment , ncol = 2) +
+   scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8))
+```
+
+## By replicate what worked
+
+Subset the McGinnis and Nextera CMO
+
+```{r FB2_re_gateNxt, fig.cap = "Alexa 647 gate by replicate"}
+pData(gs)$treatment <- paste(pData(gs)$source, pData(gs)$lipid, sep="-")
+# Subset only the relevant columns
+drop_sample <-c("Unstained-", "spikeNeg") 
+gs_subset <- gs[c(1,5:7,9:11),]
+  
+ggcyto(gs_subset, aes(x=`Alexa 647`, fill=replicate), 
+       subset="Live",) + 
+  geom_density(alpha=0.5) + 
+  geom_gate("A647 positive") +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  facet_wrap(~treatment, nrow = 3) +
+   scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8))
+```
+
+## Samples were negatives where spiked in
+
+After running the majoirty of the samples I took the DAPI only negative control and split it across the labelled samples. The purpose was to act as a negative spike-in to assess signal to noise.  
+
+```{r FB2_spike, fig.height=20, fig.width=12, fig.cap = "Alexa 647 gate spike-in negatives"}
+# Subset only the relevant columns
+drop_sample <-c("Unstained-", "spikeNeg") 
+gs_spikeNeg <- gs[c(1,8,12,16),]
+
+ggcyto(gs_spikeNeg, aes(x=`Alexa 647`, fill=sample), 
+       subset="Live",) + 
+  geom_density(alpha=0.5) + 
+  geom_gate("A647 positive") +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  facet_wrap(~replicate) +
+   scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8))
+```
+
+# Get populations stats for downstream analysis
+To get the data from each gating step from the GatingSet, we can use the getPopStats function.
+
+```{r}
+gs_pop_get_count_fast(gs) %>% head
+
+ps <- as_tibble(gs_pop_get_count_fast(gs))
+```
+
+We can now easily calculate the ‘percent of parent’ (a common metric in FACS analysis).
+
+```{r}
+ps$percent_of_parent <- ps$Count/ps$ParentCount
+```
+
+If we want to retain any Pheno Data from the initial flowSet, we can use a simple merge (here, we only have well information).  
+Can plot summary statistics with this tibble.  
+
+```{r}
+psm <- left_join(ps,pData(fs),
+                 by=c("name" = "name"))
+```
+
+# Conclusion
+The original McGinnis LMO works best. The IDT custom CMO works pretty well although there is a 5 - 10 fold decrease in signal.  
+The genelink catalogue and custom LMOs do not work
+
+## Next steps
+
+Check with Genelink what went wrong. Maybe resuspension or concentration
+Compare pooled washing to unpooled washing
+
+### Cleanup
+```{r}
+write_csv(psm, here::here(
+  "data/FACS/210929_check_customMULTIseq", "population_stats.csv"
+  ), quote = "none")
+
+sessionInfo()
+```

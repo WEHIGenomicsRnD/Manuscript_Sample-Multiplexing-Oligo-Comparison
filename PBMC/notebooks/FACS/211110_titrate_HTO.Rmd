@@ -1,0 +1,342 @@
+---
+title: "Titrate Hashtag reagent by FACS"
+description: |
+  Titrate Total-Seq C reagent
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=8, fig.asp=0.618, 
+                      fig.path='./Figures/HTO/',
+                      warning=FALSE, message=FALSE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = here::here())
+library(flowCore)
+library(ggcyto)
+library(knitr)
+library(tidyverse)
+source(here::here("scripts/R/theme_publication.R"))
+```
+
+# Installation
+Follow the guidelines of 
+https://jchellmuth.com/posts/FACS-with-R/
+
+```{r, eval=FALSE}
+BiocManager::install(c("flowCore", "ggcyto"))
+```
+
+# Experimental details
+
+## Recap
+For the cell multiplexing manuscript its important to titrate the reagents here the Total-Seq C oligo is titrated.
+
+## Samples
+1.	K562 cells
+
+## Aim
+
+Titrate MULTI-Seq oligos
+
+# Read and format .fcs data
+The read.flowSet allows you to read many .fcs at once. The resultant flowSet object will store the data from all these .fcs files.
+
+```{r, include=TRUE}
+list.files(here::here(
+  "data/FACS/", "211110_HTO_dilution"
+  ))
+
+fs <- read.flowSet(path = here::here(
+  "data/FACS/", "211110_HTO_dilution"
+  ),
+  pattern = "*.fcs",
+  alter.names = T)
+
+filenames <- as_tibble(pData(fs))
+```
+
+Sample information (aka phenotypic data) such as sample names can be accessed with the pData function. The default sample names are not very useful. So, let’s extract the sample name.
+
+## Mung sample names
+
+Daniel had to make this samplesheet himself.
+
+```{r, include=FALSE}
+samples <- read_csv(here::here(
+  "metadata/FACS", "211110_MULTIseq_compare_samplesheet.csv"
+))
+
+# Subset and reorder the relevant rows for this experiment
+samples <- samples[c(2:8,24),]
+samples <- samples[c(1,4,6,2,3,5,7,8),]
+samples
+filenames
+
+#pData(fs)$label <- samples$label
+pData(fs)$concentration <- samples$concentration
+pData(fs)$barcode <- samples$Barcode
+pData(fs)$detection <- samples$Detection
+pData(fs)$replicate <- samples$replicate
+pData(fs)$label <- samples$label
+
+pData(fs)$sample <- paste(samples$label,
+                          samples$Detection,
+                          "conc",
+                          samples$concentration,
+                          sep="-")
+```
+
+Write phenotypic data
+
+```{r}
+pData(fs) %>% 
+  kable()
+```
+
+Rename channels.
+
+```{r}
+colnames(fs)[colnames(fs)=="APC.A"] <- "A647"
+colnames(fs)[colnames(fs)=="V450.50.A"] <- "DAPI"
+```
+
+## Convert to Gating set object
+To be able to add gates, the flowSet has to be transformed to a GatingSet object with the GatingSet function
+
+```{r}
+gs <- GatingSet(fs)
+```
+
+If you want to check where the singlets you filtered out show up in FSC vs SSC (the plot that is typically used to remove debris or gate live cells), you can do this by setting different subets in the ggcyto command (‘root’ or ‘Singlets’).
+
+# Gating strategy {.tabset}
+
+## Debris gate
+
+The axis limits are set by the instrument. Use FSC.H,y=SSC.H
+
+```{r}
+ggcyto(gs[[1]], 
+       aes(x=FSC.H,y=SSC.A), subset="root") + 
+  geom_hex(bins = 200) + 
+  ggcyto_par_set(limits = "instrument") + 
+    scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8))
+```
+
+### Define the gate
+check the gate in a plot (before adding it to the gating set)
+if the gate seems right, add / apply it to the gating set
+recompute the gatingSet to have statistics available.
+
+Its much easier to draw rectangle gates than polygon gates in R.
+
+```{r}
+# define gate
+g.debris <- rectangleGate(filterId = "noDebris",
+                          "FSC.H"=c(2.2e4,8e4),
+                          "SSC.A"=c(2.75e4,1.5e5)) 
+
+# check gate
+ggcyto(gs[[1]],aes(x=FSC.H,y=SSC.A) ,subset="root") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.debris) + 
+  ggcyto_par_set(limits = "instrument") + 
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8))
+```
+
+### Gate the cells
+
+```{r}
+gs_pop_add(gs,g.debris) # add gate to GatingSet
+recompute(gs)
+```
+
+```{r debris_gate, fig.height=20, fig.width=12, fig.cap = "Debris gate"}
+ggcyto(gs,aes(x=FSC.H,y=SSC.A)) +
+  geom_hex(bins = 200) + 
+  geom_gate("noDebris") +
+  geom_stats(adjust = 0.8) + 
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8)) + facet_wrap(~sample, ncol = 3)
+```
+
+## Singlet gate
+
+Drawing the polygon gate is a real pain, I have to manually type numbers in.
+
+### Define the gate
+check the gate in a plot (before adding it to the gating set)
+if the gate seems right, add / apply it to the gating set
+recompute the gatingSet to have statistics available
+
+```{r}
+# define gate
+g.singlets <- polygonGate(filterId = "Singlets",
+                           "FSC.A"=c(4e4,1.8e5,8e4,3e4),
+                           "FSC.H"=c(1.5e4,8e4,9e4,2e4)) 
+
+# check gate
+ggcyto(gs[[1]],aes(x=FSC.A,y=FSC.H) ,subset="noDebris") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.singlets) + 
+  ggcyto_par_set(limits = "instrument") + 
+      scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8))
+```
+
+### Gate the cells
+
+```{r}
+gs_pop_add(gs,g.singlets,
+           parent="noDebris") # add gate to GatingSet
+
+recompute(gs)
+```
+
+overview plots at each gating step.
+
+```{r singlet_gate, fig.height=20, fig.width=12, fig.cap = "Singlet gate"}
+ggcyto(gs,aes(x=FSC.A,y=FSC.H), 
+       subset="noDebris") + 
+  geom_hex(bins = 200) + 
+  geom_gate("Singlets") +
+  geom_stats(adjust = 0.8) + 
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8)) + facet_wrap(~sample, ncol = 5)
+```
+
+## Live cell gate
+
+I'm unsure if PI or DAPI is the viability dye. Use DAPI because spectral overlap means PI is useless without compensation.
+
+Gating steps are as above. Differentiating live and dead cells solely based on DAPI exclusion.
+
+```{r}
+g.live <- rectangleGate(filterId = "Live",
+                      "FSC.A"=c(5e4,1.5e5),
+                      "DAPI.A"=c(100,9e2)) # define gate
+
+# Add biexponential axis
+ggcyto(gs[[1]], aes(x=FSC.A,y=DAPI.A),
+       subset="Singlets") + 
+  geom_hex(bins = 200) + 
+  geom_gate(g.live) + 
+  scale_y_flowjo_biexp() +
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8))
+```
+
+### Gating out dead cells
+
+```{r}
+gs_pop_add(gs, 
+    g.live, 
+    parent="Singlets") # add gate to GatingSet
+
+recompute(gs)
+```
+
+```{r live_gate, fig.height=20, fig.width=12, fig.cap = "Live gate"}
+ggcyto(gs,aes(x=FSC.A,y=DAPI.A),
+       subset="Singlets") + 
+  geom_hex(bins = 200) + 
+  geom_gate("Live") +
+  geom_stats(adjust = 0.8) + 
+  scale_y_flowjo_biexp() +
+  ggcyto_par_set(limits = "instrument") +
+  scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 8)) +  facet_wrap(~sample, ncol = 4)
+```
+
+# Set Alexa 647+ feature barcode 2 detection oligo
+
+This looks like the best control to use to set the gate.
+* Unstained PI sample
+
+```{r}
+g.a647 <- rectangleGate(filterId="A647",
+                       "A647"=c(800, Inf)) # set gate
+
+ggcyto(gs[[1]],
+       aes(x=`A647`), subset="Live") + 
+  geom_density(fill="rosybrown") + 
+  geom_gate(g.a647) + 
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() + 
+    scale_colour_Publication()+ theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),strip.text.x = element_text(size = 12))
+```
+
+## Add gate
+
+```{r}
+gs_pop_add(gs, g.a647, parent="Live") # add gate to GatingSet
+recompute(gs) # recalculate Gatingset
+
+ggcyto(gs, aes(x=A647),
+       subset="Live") + 
+  geom_density(fill="rosybrown") + 
+  geom_gate("A647") +
+  geom_stats(adjust = 0.99, digits = 3) +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  xlab("Feature barcode detection oligo") +
+  facet_wrap(~sample , ncol = 2) +
+  scale_colour_Publication()+ theme_Publication() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), strip.text.x = element_text(size = 8)) +
+  facet_wrap(~sample)
+```
+
+# Visualise Alexa 647 signal {.tabset}
+
+## By Dilution
+
+```{r, include=FALSE}
+pData(gs)$sample
+# Subset only the relevant columns
+
+gs_subset <- gs[c(1:7),]
+pData(gs_subset)$concentration <- as.factor(pData(gs_subset)$concentration)
+```
+
+Make overlay plot
+
+
+```{r FB2_dil_gate, fig.cap = "Alexa 647 gate by dilution"}  
+ggcyto(gs_subset, aes(x=A647, fill=concentration), 
+       subset="Live",) + 
+  geom_density(alpha=0.33) + 
+  geom_gate("A647") +
+  ggcyto_par_set(limits = "instrument") + 
+  scale_x_flowjo_biexp() +
+  facet_grid(~detection) +
+  xlab("Detection oligo") +
+  scale_fill_discrete(limits=c("1", "2", "5", "10", "50", "100", "0")) +  
+  theme_Publication() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### Cleanup
+```{r}
+sessionInfo()
+```
