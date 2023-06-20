@@ -1,0 +1,25 @@
+Library or Sample,Library Type,Grouped By,Group Name,Metric Name,Metric Value,Protocol
+Library,Multiplexing Capture,CMO Name,CMO301,CMO signal-to-noise ratio,3.21,CellPlex
+Library,Multiplexing Capture,CMO Name,CMO302,CMO signal-to-noise ratio,4.15,CellPlex
+Library,Multiplexing Capture,CMO Name,CMO303,CMO signal-to-noise ratio,5.08,CellPlex
+Library,Multiplexing Capture,CMO Name,CMO304,CMO signal-to-noise ratio,5.62,CellPlex
+Library,Multiplexing Capture,CMO Name,CMO305,CMO signal-to-noise ratio,4.17,CellPlex
+Library,Multiplexing Capture,CMO Name,CMO306,CMO signal-to-noise ratio,4.62,CellPlex
+Library,Multiplexing Capture,CMO Name,CMO307,CMO signal-to-noise ratio,4.17,CellPlex
+Library,Multiplexing Capture,CMO Name,CMO308,CMO signal-to-noise ratio,4.19,CellPlex
+Library,Multiplexing Capture,CMO Name,MULTI_2,CMO signal-to-noise ratio,7.76,MULTI-Seq
+Library,Multiplexing Capture,CMO Name,MULTI_3,CMO signal-to-noise ratio,7.26,MULTI-Seq
+Library,Multiplexing Capture,CMO Name,MULTI_4,CMO signal-to-noise ratio,7.4,MULTI-Seq
+Library,Multiplexing Capture,CMO Name,MULTI_5,CMO signal-to-noise ratio,7.33,MULTI-Seq
+Library,Multiplexing Capture,CMO Name,MULTI_6,CMO signal-to-noise ratio,7.16,MULTI-Seq
+Library,Multiplexing Capture,CMO Name,MULTI_7,CMO signal-to-noise ratio,7.94,MULTI-Seq
+Library,Multiplexing Capture,CMO Name,MULTI_8,CMO signal-to-noise ratio,6.77,MULTI-Seq
+Library,Multiplexing Capture,CMO Name,MULTI_9,CMO signal-to-noise ratio,6.31,MULTI-Seq
+Library,Multiplexing Capture,CMO Name,HTO_1,CMO signal-to-noise ratio,2.78,Hashtag Ab
+Library,Multiplexing Capture,CMO Name,HTO_2,CMO signal-to-noise ratio,7.94,Hashtag Ab
+Library,Multiplexing Capture,CMO Name,HTO_3,CMO signal-to-noise ratio,5.59,Hashtag Ab
+Library,Multiplexing Capture,CMO Name,HTO_4,CMO signal-to-noise ratio,5.11,Hashtag Ab
+Library,Multiplexing Capture,CMO Name,HTO_5,CMO signal-to-noise ratio,7.71,Hashtag Ab
+Library,Multiplexing Capture,CMO Name,HTO_6,CMO signal-to-noise ratio,6.43,Hashtag Ab
+Library,Multiplexing Capture,CMO Name,HTO_7,CMO signal-to-noise ratio,7.77,Hashtag Ab
+Library,Multiplexing Capture,CMO Name,HTO_8,CMO signal-to-noise ratio,7.88,Hashtag Ab
