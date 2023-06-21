@@ -11,5 +11,48 @@ We also compared the performance of fixed scRNA-Seq kits and highlight the advan
 
 The count matrices and metadata are available as SingleCellExperiment objects at DOI: 10.5281/zenodo.8031078 https://zenodo.org/record/8031079
 
+### Data structure and usage
+
+The processed data is in the form of SingleCellExperiment objects. https://bioconductor.org/packages/devel/bioc/vignettes/SingleCellExperiment/inst/doc/intro.html
+
+I know most people use Seurat but most in my institute use Bioconductor packages therefore for compatibility I do the same.
+
+Each sample multiplexing oligo was performed in a separate 10x Genomics capture = lane = well. I did not do any integration and analysed them as separate objects. Therefore I packaged each experiment into a list of SingleCellExperiment objects. I put the name of the sample multiplexing reagent as the name.
+
+```r
+library(SingleCellExperiment)
+
+sces <- readRDS("path_to_file")
+
+# list which sample multiplexing oligos were used
+names(sces)
+```
+
+You can access each individual capture with its name.
+
+```r
+sce <- sces[["CellPlex"]]
+```
+
+You may access the cell level metadata with:
+
+```r
+colData(sce)
+```
+
+You may access the gene expression count matrix with:
+
+```r
+counts(sce)
+```
+
+You may access the sample multiplexing oligo tag counts with:
+
+```r
+counts(altExp(sce))
+```
+
+There are functions to convert between SingleCellExperiment and Seurat objects but I did not use them in a long time and cannot guarantee if they work correctly.
+
 Single-cell | RNA-seq | Sample Multiplexing | Fixed | CRISPRclean
 Correspondence: brown.d@wehi.edu.au
