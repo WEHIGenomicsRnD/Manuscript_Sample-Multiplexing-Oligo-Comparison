@@ -1,0 +1,279 @@
+---
+title: "CRISPRclean gene correlation and differential expression PDX"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/correlation_DE/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+library(DropletUtils)
+library(tidyverse)
+library(patchwork)
+library(scuttle)
+library(scater)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+
+Evaluate jumpcode CRISPRclean single-cell boost kit. This adds more content on top of ribosomal and mitochondrial genes.  
+Including Pseudogenes and non variablee genes
+
+## This sample
+
+Ovarian carcinosarcoma PDX. The unlabelled capture only.
+[ELN entry](https://au-mynotebook.labarchives.com/share/Daniel_RnD_Projects/NDA1LjZ8NjgxOTcvMzEyL1RyZWVOb2RlLzczMDU3MTIzN3wxMDI5LjY=)
+
+# Load Data
+
+Read in data
+
+```{r loadData}
+sces <- readRDS(
+ "/vast/scratch/users/brown.d/S000331/SCEs/PDX_CRISPR_colData.sces.rds"
+)
+names(sces)
+
+sce_jmp <- sces[["Jumpcode"]]
+sce_utd <- sces[["Untreated"]]
+```
+
+Load the jumpcode panel and metrics
+
+```{r}
+jpc <- read_csv(here::here(
+  "CRISPRclean/metadata/Jumpcode", "CRISPRclean_Single_Cell_RNA_Boost_Kit_depletion_content_set.csv"
+))
+
+tb <- read_csv(here::here(
+  "CRISPRclean/data/PDX/Matrices", "PDX_CRISPR_colData.csv.gz"
+))
+```
+
+# Check gene gene correlation {.tabset}
+
+Keep barcodes only in both undepleted and depleted
+
+```{r}
+bcs <- intersect(
+  colnames(sce_jmp),
+  colnames(sce_utd)
+)
+
+tb <- tb[tb$Barcode %in% bcs,]
+```
+
+## Check the mitocondrial gene counts still linear
+
+Check that high mito cells in Jumpcode depleted are high also in undepleted.
+That the destruction is linear. Otherwise we will be unable to remove low quality cells by this metric.
+
+```{r}
+mito_per <- tb %>% 
+  dplyr::select(Protocol, subsets_Mito_percent, Barcode) %>% 
+  pivot_wider(names_from =  Protocol, values_from = subsets_Mito_percent)
+
+mito_per %>% 
+  arrange(desc(Undepleted)) %>% 
+  head()
+```
+
+Thee correlation here is poor here reflecting the CRISPRclean destruction has worked very well.  
+I would expect mitochondrial filtering to work poorly here on the CRISPR sample.
+
+```{r mito_density}
+plt1 <- ggplot(mito_per, 
+             aes(x = Undepleted, y= `CRISPRclean-Boost`)) +
+  geom_point(alpha = 0.1, size=0.5) + 
+  stat_density2d() +
+  ylab("Jumpcode mito %") + 
+  xlab("Undepleted mito %")
+
+plt1
+
+corr <- cor(mito_per$`CRISPRclean-Boost`, mito_per$Undepleted, method = "pearson")
+```
+
+The Pearson correlation of Untreated and CRISPRclean is: `r corr`
+
+```{r mito_corr}
+plt2 <- ggplot(mito_per, 
+             aes(x = Undepleted, y= `CRISPRclean-Boost`)) +
+  geom_point(alpha = 0.1, size=0.5) +
+  ylab("Jumpcode mito %") + 
+  xlab("Undepleted mito %") +
+  geom_smooth(method=lm, level=0.95, colour="red")
+
+plt2
+```
+
+The linear fit looks better than the non-linear fit.
+
+```{r mito_corr_NL}
+plt3 <- ggplot(mito_per, 
+             aes(x = Undepleted, y= `CRISPRclean-Boost`)) +
+  geom_point(alpha = 0.1, size=0.5) +
+  ylab("Jumpcode mito %") + 
+  xlab("Undepleted mito %") +
+  geom_smooth()
+
+plt3
+```
+
+# Overall gene gene correlation
+
+```{r}
+crispClean_set <- jpc$GeneID
+is_crc <- rownames(sce_jmp) %in% crispClean_set
+summary(is_crc)
+```
+
+## Gene gene correlation overall
+
+```{r rowSums}
+sce_jmp <- addPerFeatureQC(sce_jmp)
+rowData(sce_jmp)$sum <- rowSums2(counts(sce_jmp))
+rowData(sce_jmp)$protocol <- "CRISPRClean"
+rowData(sce_jmp)$CRISPR_panel <- rownames(sce_jmp) %in% crispClean_set
+
+sce_utd <- addPerFeatureQC(sce_utd)
+rowData(sce_utd)$sum <- rowSums2(counts(sce_utd))
+rowData(sce_utd)$protocol <- "Undepleted"
+rowData(sce_utd)$CRISPR_panel <- rownames(sce_utd) %in% crispClean_set
+
+gene_tb <- as_tibble(rbind(
+  rowData(sce_jmp),
+  rowData(sce_utd)
+))
+
+gene_tb$Symbol <- gsub("GRCh38_", "", gene_tb$Symbol)
+
+# Add 1 before logging
+gene_tb$sum <- gene_tb$sum + 1
+```
+
+Convert to wide tibble
+
+```{r}
+gene_tb_wide <- gene_tb %>%
+  select(ID,Symbol,sum,protocol,CRISPR_panel) %>% 
+  pivot_wider(names_from = protocol, values_from = sum)
+
+# Add catagory of depletion
+gene_tb_wide <- left_join(gene_tb_wide, jpc, by=c("Symbol" = "GeneID"))
+gene_tb_wide$Category[is.na(gene_tb_wide$Category)] <- "Not in panel"
+
+gene_tb_wide
+```
+
+## Plot the result of gene gene correlation
+
+Sum of counts per gene. Good correlation. The depletion worked less than PBMCs but the expression of genes in the panel is much lower.
+
+Some targets are not hit but need a closer look.
+
+```{r gene_gene_sum}
+plt1 <- ggplot(gene_tb_wide, 
+             aes(x = Undepleted, y= CRISPRClean, colour = Category)) + 
+  geom_point(alpha = 0.33, size=1) + 
+  guides(colour = guide_legend(override.aes = list(size=3, alpha=1))) +
+  xlab("Undepleted") + 
+  ylab("CRISPRclean") +
+  ggtitle("") +
+  scale_x_continuous(trans='log10') +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "bl") +
+  scale_color_manual(values = c("orange", "blue", "red"), 
+                     labels = c('Non variable genes','Not in gRNA panel', "Ribosomal and\n mitochondrial")) +
+  theme_Publication(base_size = 20)
+
+plt1
+```
+
+Compute person correlation
+
+```{r corr_gene}
+tb_cor <- gene_tb_wide[gene_tb_wide$CRISPR_panel == FALSE,]
+pc <- cor(x = tb_cor$CRISPRClean, y = tb_cor$Undepleted, method="pearson")
+```
+
+The person correlation is `r pc`
+
+View those genes that are not in Jumpcode panel but are depleted in Jumpcode treatment
+
+Depletion percentage
+
+```{r}
+geneName <- as_tibble(rowData(sce_utd)[,c("ID", "Symbol")])
+gene_tb_wide <- left_join(gene_tb_wide, geneName, by=c("ID"="ID"))
+
+gene_tb_wide$DepletePercent <- ((gene_tb_wide$CRISPRClean - gene_tb_wide$Undepleted) / gene_tb_wide$Undepleted) * 100
+
+non_specific <- gene_tb_wide %>% 
+  arrange(DepletePercent) %>% 
+  filter(CRISPR_panel == FALSE) %>% 
+  filter(Undepleted > 1000) %>% 
+  filter(CRISPRClean > 100) %>% 
+  filter(DepletePercent < 50)
+
+non_specific %>% 
+  select(Symbol.x:Category,DepletePercent) %>% 
+  head(20)
+```
+
+## Look at the expression of genes in the panel to check the ones that didn't work
+
+Mostly non-variable genes that at a glance do not look like they encode any important function.
+
+```{r}
+failed_panel <- gene_tb_wide %>% 
+  arrange(desc(DepletePercent)) %>% 
+  filter(CRISPR_panel == TRUE) %>% 
+  filter(Undepleted > 100) %>% 
+  filter(CRISPRClean > 100) %>% 
+  filter(DepletePercent > 0)
+
+failed_panel %>% 
+  select(Symbol.x:Category,DepletePercent) 
+```
+
+# Save stats object
+
+```{r saveSCEs}
+write_csv(gene_tb, here::here(
+  "CRISPRclean/data/PDX/Matrices", "PDX_gene_metrics.csv.gz"
+))
+
+write_csv(non_specific, here::here(
+  "CRISPRclean/data/PDX/Matrices", "PDX_nonSpecific_deplete.csv.gz"
+))
+```
+
+# Conclusion
+
+The Jumpcode depletion worked mostly well but there are a few transcripts that weren't hit.
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

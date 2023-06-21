@@ -1,0 +1,334 @@
+---
+title: "Dimension reduction"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/dimred/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = here::here())
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(patchwork)
+  library(scuttle)
+  library(scater)
+  library(scran)
+  library(PCAtools)
+  })
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+
+Evaluate jumpcode CRISPRclean single-cell boost kit. This adds more content on top of ribosomal and mitochondrial genes.  
+Including Pseudogenes and non variable genes
+
+## This sample
+
+I restrict my analysis to R010_MULTI-Seq_GEX in PBMCs. This sample had the best signal to noise.
+
+I sequenced this particular sample much deeper as part of NN265.  
+[ELN entry](https://au-mynotebook.labarchives.com/share/Daniel_RnD_Projects/MzQ3LjF8NjgxOTcvMjY3LTE0NzgvVHJlZU5vZGUvMjMwMTMwNzYyN3w4ODEuMDk5OTk5OTk5OTk5OQ==)
+
+## Comparisons
+
+I mapped both the undepleted and CRISPRclean depleted datasets to GRCh38 reference provided by cellranger.  
+Given the Jumpcode advertising I downsampled the CRISPRclean to 50% the reads of untreated.
+
+I follow the vignette of [Seurat reference map](https://satijalab.org/seurat/articles/multimodal_reference_mapping.html)
+
+## Aim
+
+Perform dimension reduction with PCA and UMAP prior to visualisation
+
+# Load Data
+
+Read in data. Was generated in 1C_Seurat_ref_map notebook.
+
+```{r loadData}
+sce_list <- readRDS(here::here(
+  "CRISPRclean/data/Jumpcode/SCEs", "PBMC_CRISPR_annotated.sces.rds"
+))
+names(sce_list)
+
+sce_list_orig <- sce_list
+```
+
+In this analysis we will keep doublets to see if they form satellite clusters in between the main clusters.
+
+```{r, eval=FALSE}
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  current <- current[!current$mul_Donor %in% "multiplet",]
+  sce_list[[n]] <- current
+}
+```
+
+# Identifying outliers by each metric
+
+In calling cells from empty droplets, we have already removed cells with very low library sizes or (by association) low numbers of expressed genes. Thus, further filtering on these metrics is not strictly necessary.
+
+I will avoid filtering on mitochondrial genes here as this metric may not be reliable with CRISPRclean boost treatment.
+
+```{r outlier_detect}
+qc_df <- list()
+reasons <- list()
+
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  qc_df[[n]] <- colData(current)
+  reasons[[n]] <- as.matrix(perCellQCFilters(
+    x=qc_df[[n]]))
+  discard <- reasons[[n]]
+  discard <- discard[,3]
+  current <- current[,!discard]
+  sce_list[[n]] <- current
+}
+
+colnames(reasons[[1]])
+lapply(reasons, colSums2)
+```
+
+Summarise how many cells left.  
+
+```{r}
+cell_drop_tb <- rbind(
+  cbind(length(colnames(sce_list_orig[[1]])), length(colnames(sce_list[[1]]))),
+  cbind(length(colnames(sce_list_orig[[2]])), length(colnames(sce_list[[2]]))),
+  cbind(length(colnames(sce_list_orig[[3]])), length(colnames(sce_list[[3]])))
+)
+
+colnames(cell_drop_tb) <- c("Before_Filter", "After_filter")
+row.names(cell_drop_tb) <- names(sce_list)
+cell_drop_tb
+```
+
+# Filtering out low-abundance genes
+
+Low-abundance genes are problematic as zero or near-zero counts do not contain much information for reliable statistical inference. These genes typically do not provide enough evidence to reject the null hypothesis during testing, yet they still increase the severity of the multiple testing correction. In addition, the discreteness of the counts may interfere with statistical procedures. Thus, low-abundance genes are often removed in many RNA-seq analysis pipelines before the application of downstream methods.
+
+Several metrics can be used to define low-abundance genes. The most obvious is the average count for each gene, computed across all cells in the data set. We typically observe a peak of moderately expressed genes following a plateau of lowly expressed genes.
+
+The distributions look the same between captures.
+
+```{r average_count_p}
+ave_counts <- list()
+
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  ave_counts[[n]] <- calculateAverage(current)
+  to_keep <- ave_counts[[n]] > 0
+  current <- current[to_keep, ]
+  sce_list[[n]] <- current
+}
+
+par(mfrow = c(2, 2))
+hist(
+  x = log10(ave_counts[[1]]), 
+  breaks = 100, 
+  main = "Untreated", 
+  col = "grey",
+  xlab = expression(Log[10] ~ "average count"))
+
+hist(
+  x = log10(ave_counts[[2]]), 
+  breaks = 100, 
+  main = "Jumpcode", 
+  col = "grey",
+  xlab = expression(Log[10] ~ "average count"))
+
+hist(
+  x = log10(ave_counts[[3]]), 
+  breaks = 100, 
+  main = "Jumpcode half downsample", 
+  col = "grey",
+  xlab = expression(Log[10] ~ "average count"))
+
+```
+
+Subset the count matrices for genes that are not expressed.
+
+About 2000 more genes are removed for Jumpcode which makes sense.
+
+```{r filter_gene}
+
+# Summarise how many cells left
+gene_drop_tb <- rbind(
+  cbind(length(rownames(sce_list_orig[[1]])), length(rownames(sce_list[[1]]))),
+  cbind(length(rownames(sce_list_orig[[2]])), length(rownames(sce_list[[2]]))),
+  cbind(length(rownames(sce_list_orig[[3]])), length(rownames(sce_list[[3]])))
+  )
+
+colnames(gene_drop_tb) <- c("Before_Filter", "After_filter")
+row.names(gene_drop_tb) <- names(sce_list)
+gene_drop_tb
+```
+
+# Remove doublets
+
+Before normalisation and dimension reduction remove doublets. The doublets are called from the PBMC MULTI-Seq analysis. *PBMC/notebooks/_build_hashing_metadata.Rmd*
+
+# UP TO HERE
+
+```{r}
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  singlets <- grepl(pattern = "^donor", x = current$mul_Donor)
+  current <- current[,singlets]
+  sce_list[[n]] <- current
+}
+```
+
+# GEX Normalization
+
+## Using the deconvolution method to deal with zero counts
+
+We pool counts from many cells to increase the count size for accurate size factor estimation (A. T. Lun, Bach, and Marioni 2016). Pool-based size factors are then ‘deconvolved’ into cell-based factors for cell-specific normalization. This removes scaling biases associated with cell-specific differences in capture efficiency, sequencing depth and composition biases.
+
+```{r normalise}
+set.seed(666)
+
+clusters <- list()
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  clusters[[n]] <- quickCluster(current)
+  current <- computeSumFactors(current, clusters = clusters[[n]], min.mean = 0.1)
+  current <- logNormCounts(current)
+  print(summary(sizeFactors(current)))
+  sce_list[[n]] <- current
+}
+```
+
+# Selecting highly variable genes (HVGs)
+
+## Fit variance
+
+```{r var_genes_p, fig.cap="Highly variable genes. Top=CellPlex, Middle=MULTI-Seq, Bottom=Hashtag"}
+var_fit <- list()
+hvg <- list()
+
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  var_fit[[n]] <- modelGeneVarByPoisson(current)
+  hvg[[n]] <- getTopHVGs(var_fit[[n]], var.threshold = 0)
+}
+```
+
+Visualize variable genes
+
+```{r}
+p1 <- plotExpression(object = sce_list[[1]], features = hvg[[1]][1:10])
+p2 <- plotExpression(object = sce_list[[2]], features = hvg[[2]][1:10])
+p3 <- plotExpression(object = sce_list[[3]], features = hvg[[3]][1:10])
+
+p1 + p2 + p3 + 
+  plot_layout(guides = "collect", ncol = 2)
+```
+
+# Dimension reduction {.tabset}
+
+## PCA
+
+```{r PCA}
+set.seed(666)
+
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  current <- denoisePCA(current, var_fit[[n]], subset.row = hvg[[n]])
+  sce_list[[n]] <- current
+}
+```
+
+### Number of PCA dimensions to retain
+
+Based on these percent variance plots retain 15 PCA dimensions
+
+```{r}
+percent.var <- list()
+
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  # Percentage of variance explained is tucked away in the attributes.
+  percent.var[[n]] <- attr(reducedDim(current), "percentVar")
+}
+
+par(mfrow = c(2, 2))
+for (i in 1:3) {
+  plot(percent.var[[i]], xlab="PC", ylab="Variance explained (%)")
+}
+
+```
+
+### Visualise PCA
+
+```{r pca_plts, fig.height=12, fig.width=16}
+pca_plt <- list()
+
+for (n in names(sce_list)) {
+  pca_plt[[n]] <- plotReducedDim(sce_list[[n]], dimred="PCA", colour_by = "detected")
+}
+
+pca_plt[[1]] + pca_plt[[2]] + pca_plt[[3]]
+```
+
+## Run UMAP
+
+```{r umap}
+set.seed(100)
+
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  current <- runUMAP(current, dimred = "PCA", n_dimred=15)
+  sce_list[[n]] <- current
+}
+
+```
+
+## Visualise UMAP
+
+```{r umap_plts, fig.asp=1}
+umap_plt <- list()
+
+for (n in names(sce_list)) {
+  current <- sce_list[[n]]
+  umap_plt[[n]] <- plotReducedDim(current, dimred="UMAP", colour_by="detected")
+}
+
+umap_plt[[1]] + umap_plt[[2]] + umap_plt[[3]]
+```
+
+# Save object
+
+```{r}
+saveRDS(sce_list, here::here(
+  "CRISPRclean/data/Jumpcode/SCEs", "PBMC_CRISPR_dimred.sces.rds"
+))
+```
+
+## Conclusions
+
+Visualize the cell type labels generated with Seurat Azimuth in another notebook.
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

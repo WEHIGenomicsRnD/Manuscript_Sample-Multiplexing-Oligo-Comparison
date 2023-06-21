@@ -1,0 +1,198 @@
+---
+title: "Generate Single-cell experiment Jumpcode PBMC"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/gn_sce/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+library(DropletUtils)
+library(tidyverse)
+library(patchwork)
+library(scuttle)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+# Aim
+
+Evaluate jumpcode CRISPRclean single-cell boost kit. This adds more content on top of ribosomal and mitochondrial genes.  
+Including Pseudogenes and non variable genes
+
+## This sample
+
+I restrict my analysis to R010_MULTI-Seq_GEX in PBMCs. This sample had the best signal to noise.
+
+I sequenced this particular sample much deeper as part of NN265.  
+[ELN entry](https://au-mynotebook.labarchives.com/share/Daniel_RnD_Projects/MzQ3LjF8NjgxOTcvMjY3LTE0NzgvVHJlZU5vZGUvMjMwMTMwNzYyN3w4ODEuMDk5OTk5OTk5OTk5OQ==)
+
+## Comparisons
+
+I mapped both the undepleted and CRISPRclean depleted datasets to GRCh38 reference provided by cellranger and the masked reference provided by jumpcode. Jumpcode says only the masked reference will highlight the differences in depleted.
+
+The Jumpcode website says the sequeencing depth can be reduced by 50% so I will perform downsampling to this level also.
+
+# Load Data
+
+Find the paths to the cell ranger output
+
+```{r dataPaths}
+head_path <- "/stornext/Projects/score/Analyses/R010_multiplexing/data/fastq/PBMC/jumpcode_PBMC_LMO_GEX/"
+tail_path <- "/outs/filtered_feature_bc_matrix/"
+
+UTD_DataPath <- paste("/stornext/Projects/score/GenomicsRnD/DB/S000331/cellranger_outs/", "PBMC_UTD-cr7", tail_path, sep="")
+JMP_full_DataPath <- paste(head_path, "PBMC_JMP-boost-ds", tail_path, sep="")
+JMP_half_DataPath <- paste(head_path, "PBMC_JMP-boost-dsHalf", tail_path, sep="")
+
+```
+
+Load data using DropletUtils
+
+```{r loadData}
+utdData <- read10xCounts(UTD_DataPath,version='3', col.names = T)
+jmpData_full = read10xCounts(JMP_full_DataPath,version='3', col.names = T)
+jmpData_half = read10xCounts(JMP_half_DataPath,version='3', col.names = T)
+
+utdData$Protocol <- "Undepleted"
+jmpData_full$Protocol <- "CRISPRclean Boost"
+jmpData_half$Protocol <- "CRISPRclean Boost"
+
+utdData$Sequencing <- "Full"
+jmpData_full$Sequencing <- "Full"
+jmpData_half$Sequencing <- "Half"
+
+```
+
+# Convert to list of sces
+
+```{r saveIntRDS}
+sces <- list(utdData, jmpData_full, jmpData_half)
+names(sces) <- c("Untreated", "Jumpcode_full", "Jumpcode_half")
+
+saveRDS(sces, "/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/CRISPRclean/PBMC_CRISPR_filtered_feature_matrix.sces.rds")
+
+# sces <- readRDS("/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/CRISPRclean/PBMC_CRISPR_filtered_feature_matrix.sces.rds")
+
+sces_orig <- sces
+```
+
+Add doublet and donor information
+
+```{r}
+mtd <- read_csv(here::here(
+  "PBMC/data/Matrices", "colData.csv.gz"
+))
+
+mtd <- mtd %>% 
+  filter(Protocol == "LMO") %>% 
+  select(cell_barcode, vir_Donor, mul_Donor)
+
+mtd$mul_Donor <- recode(mtd$mul_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+
+mtd$vir_Donor <- recode(mtd$vir_Donor,
+                      "VBDR1186" = "donor0",
+                      "VBDR1206" = "donor1",
+                      "VBDR1216" = "donor2",
+                      "VBDR1233" = "donor3"
+)
+```
+
+Add rownames as gene ids and attach donor labels
+
+```{r}
+# sces <- sces_orig
+
+for (n in names(sces)) {
+  current <- sces[[n]]
+  row.names(current) <- rowData(current)$Symbol
+  col_data <- as.data.frame(colData(current))
+  col_data <- left_join(x = col_data, y = mtd, 
+                      by= c("Barcode" = "cell_barcode"))
+  colData(current) <- DataFrame(col_data)
+  colnames(current) <- col_data$Barcode
+  sces[[n]] <- current
+}
+
+```
+
+# Calculate jumpcode metrics
+
+Load the jumpcode panel
+
+```{r}
+jpc <- read_csv(here::here(
+  "CRISPRclean/metadata/Jumpcode", "CRISPRclean_Single_Cell_RNA_Boost_Kit_depletion_content_set.csv"
+))
+```
+
+Calculate Metrics
+
+```{r}
+for (n in names(sces)) {
+    current <- sces[[n]]
+    mito_set <- grep("^MT-" ,row.names(current), value = T)
+    is_mito <- rownames(current) %in% mito_set
+    crispClean_set <- jpc$GeneID
+    is_crc <- rownames(current) %in% crispClean_set
+
+    current <- scater::addPerCellQC(current, 
+                                    subsets = list(Mito=is_mito, Jumpcode=is_crc)
+                 )
+    sces[[n]] <- current
+}
+
+```
+
+Write col data to tibble and save
+
+```{r}
+tb <- as_tibble(rbind(
+  colData(sces[[1]]),
+  colData(sces[[2]]),
+  colData(sces[[3]])
+))
+
+tb <- tb %>% 
+  select(-Sample)
+```
+
+# Save outputs
+
+```{r}
+saveRDS(sces, here::here(
+  "CRISPRclean/data/Jumpcode/SCEs", "PBMC_CRISPR_colData.sces.rds"
+))
+
+write_csv(tb, here::here(
+  "CRISPRclean/data/Jumpcode/Matrices", "PBMC_CRISPR_colData.csv.gz"
+))
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```
