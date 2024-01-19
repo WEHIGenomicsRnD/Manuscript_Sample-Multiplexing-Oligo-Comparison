@@ -84,7 +84,7 @@ Subset for the significant off-target elements.
 
 ```{r}
 tb <- read_csv(here::here(
-  "CRISPRclean/data/Jumpcode/Matrices", "PBMC_DEgenes.csv.gz"
+  "CRISPRclean/data/PBMC/Matrices", "PBMC_DEgenes.csv.gz"
 ))
 
 db_expt <- tb %>% 

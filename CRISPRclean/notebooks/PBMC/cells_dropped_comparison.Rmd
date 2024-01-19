@@ -1,0 +1,238 @@
+---
+title: "Investigate which cells dropped jumpcode"
+author: "Daniel Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: tango 
+    df_print: paged
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      dev = "png",
+                      dpi = 300,
+                      fig.asp=0.6, 
+                      fig.path='./figures/cellDrop/',
+                      warning=FALSE, message=FALSE)
+knitr::opts_knit$set(root.dir = here::here())
+library(scater)
+library(scran)
+library(scuttle)
+library(edgeR)
+library(patchwork)
+library(knitr)
+library(tidyverse)
+source(here::here("scripts/R/theme_publication.R"))
+theme_set(theme_Publication())
+```
+
+## Recap
+The purpose of this experiment was to compare the performance of 3 different cell multiplexing reagents in PBMCs.  
+To obtain the ground truth of performance, the genotypes may be used to demultiplex donors.
+In this experiment there are 4 donors. The cell multiplexing was done in technical duplicate.  
+
+## Aim
+
+In this notebook the PBMCs are nquality controlled visualised and dimension reduction performed.
+
+## Sample
+
+I restrict my analysis to R010_MULTI-Seq_GEX in PBMCs. This sample had the best signal to noise.
+
+I sequenced this particular sample much deeper as part of NN265.  
+https://au-mynotebook.labarchives.com/share/Daniel_RnD_Projects/MzQ3LjF8NjgxOTcvMjY3LTE0NzgvVHJlZU5vZGUvMjMwMTMwNzYyN3w4ODEuMDk5OTk5OTk5OTk5OQ==
+
+I sequenced both CRISPRclean treated and untreated.  
+To enable sequencing of both I had William repeat the libary prep of the untreated:
+
+https://au-mynotebook.labarchives.com/share/Daniel_RnD_Projects/MzQ1Ljh8NjgxOTcvMjY2L1RyZWVOb2RlLzM4OTk3NzUzNTd8ODc3Ljg=
+
+## Load Data
+
+We remove doublets identified by cellranger multi
+
+```{r loadData}
+sce <- readRDS(here::here("data/Jumpcode/SCEs", "jmp_all-counts_anno.sce.rds"))
+sce <- sce[,sce$chr_consensuscall.global == "Singlet"]
+
+sce_jmp <- sce[,sce$deplete == "CRISPRClean"]
+sce_utd <- sce[,sce$deplete == "Untreated"]
+
+all.sce <- list(sce_jmp, sce_utd)
+names(all.sce) <- c("CRISPRclean", "Untreated")
+
+unfiltered <- all.sce
+```
+
+Load the jumpcode panel
+
+```{r}
+jpc <- read_csv(here::here(
+  "metadata/Jumpcode", "housekeeping_100.csv"
+),col_names = F)
+```
+
+# GEX: Quality control
+
+## More manual approach to outlier removal
+
+I can summarise by cell between the 2 treatments and check by tibble if the same cell is removed or not.
+
+* For sum.field, small outliers are detected. These are considered to represent low-quality cells that have not been insufficiently sequenced.
+* For detected.field, small outliers are detected. These are considered to represent low-quality cells with low-complexity libraries. Detection is performed on the log-scale to adjust for a heavy right tail. 
+* For each column specified by sub.fields, large outliers are detected. This aims to remove cells with high mitochondrial content, usually corresponding to damaged cells.
+
+```{r}
+filtered <- list()
+
+for (n in names(all.sce)) {
+    current <- all.sce[[n]]
+    is.mito <- grep("^MT", row.names(current))
+    filtered[[n]] <- quickPerCellQC(all.sce[[n]], subsets=list(Mito=is.mito), sub.fields="subsets_Mito_percent")
+    filtered[[n]] <- as.data.frame(filtered[[n]])
+    row.names(filtered[[n]]) <- colnames(current)
+
+}
+
+summary_stats <- dplyr::bind_cols(filtered)
+
+colnames(summary_stats) <- c("CSP-low_lib_size", "CSP-low_n_features", "CSP-high_subsets_Mito_percent", "CSP-discard",
+                             "UTD-low_lib_size", "UTD-low_n_features", "UTD-high_subsets_Mito_percent", "UTD-discard")
+summary_stats$barcode <- str_split(row.names(filtered[[1]]), "-", simplify=T)[,2]
+```
+
+Extract the colData and convert to tibble
+
+```{r}
+df_list <- list()
+
+for (n in names(all.sce)) {
+    current <- all.sce[[n]]
+    is.mito <- grep("^MT", row.names(current))
+    current <- addPerCellQC(current, subsets=list(Mito=is.mito))
+    df_list[[n]] <- as.data.frame(colData(current))
+}
+
+tb <- dplyr::bind_rows(df_list)
+tb <- inner_join(tb, summary_stats,
+                by=c("cellBC"="barcode")) %>% 
+  select(deplete, cellBC, cellBC:tube_ID, vir_Donor,mul_Donor,
+         sum,detected, subsets_Mito_percent, `CSP-discard`, `UTD-discard`)
+
+tb %>% 
+  count(`CSP-discard`, `UTD-discard`) %>% 
+  kable()
+```
+
+There are 972 cells retained in CRISPR clean that were discard in untreated.
+
+There are 298 cells discarded in CRISPPRclean that are retained in untreated
+
+# Plot all cells with highlight dropped cells
+
+Find those cells that are unique to CRISPRclean or untreated.  
+See where they lie on the quality control plots.
+
+```{r}
+tb$discard <- "Retained"
+tb$discard[tb$`CSP-discard`] <- "CRISPR"
+tb$discard[tb$`UTD-discard`] <- "Untreated"
+both <- tb$`CSP-discard` == TRUE & tb$`UTD-discard` == TRUE
+tb$discard[both] <- "Both"
+
+tb %>% 
+  count(discard) %>% 
+  kable()
+```
+
+## Plot quality control metrics {.tabset}
+
+### Mitochondiral percentage
+
+This is the key plot to view
+
+```{r mito_per_p, fig.cap="Mitochondrial percentage of total counts in cells unique to each protocol"}
+tb_wide <- tb %>% 
+  pivot_wider(names_from = deplete, values_from = subsets_Mito_percent, id_cols = c(cellBC, discard))
+
+plt3 <- ggplot(tb_wide,
+             aes(x = Untreated, y= CRISPRClean, colour=discard)) + 
+  geom_point(size=1, alpha=0.75) +
+  ylab("CRISPRclean") + 
+  xlab("Untreated") +
+  ggtitle("Mitochondrial percentage") +  scale_fill_brewer(palette = "Set2")
+
+plt3
+```
+
+## Mitochondrial with linear model
+
+```{r mito_lm, fig.cap="Mitochondrial percentage of total counts in cells unique to each protocol", fig.width=12, fig.height=6}
+tb_wide <- tb %>% 
+  pivot_wider(names_from = deplete, values_from = subsets_Mito_percent, id_cols = c(cellBC, discard))
+
+plt4 <- ggplot(tb_wide,
+             aes(x = Untreated, y= CRISPRClean)) + 
+  geom_point(size=1, alpha=0.75) +
+  ylab("CRISPRclean") + 
+  xlab("Untreated") +
+  ggtitle("Mitochondrial percentage") +
+  geom_smooth(method = "lm") +
+  scale_fill_brewer(palette = "Set2")
+
+plt3 + plt4
+```
+
+### Library size
+
+```{r libSize_p, fig.cap="Library size in cells unique to each protocol"}
+tb_wide <- tb %>% 
+  pivot_wider(names_from = deplete, values_from = sum, id_cols = c(cellBC, discard))
+
+
+plt1 <- ggplot(tb_wide,
+             aes(x = Untreated, y= CRISPRClean, colour=discard)) + 
+  geom_point(size=0.75, alpha=0.5) +
+  ylab("CRISPRclean") + 
+  xlab("Untreated") +
+  ggtitle("Library size (UMIs)") +
+  scale_y_continuous(trans='log10') + scale_x_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "bl") +
+  scale_colour_brewer(palette = "Set2") 
+
+plt1
+```
+
+### Detected genes
+
+No obvious increase in genes detected
+
+```{r detected_genes_p, fig.cap="Number of detected genes in cells unique to each protocol"}
+tb_wide <- tb %>% 
+  pivot_wider(names_from = deplete, values_from = detected, id_cols = c(cellBC, discard))
+
+plt2 <- ggplot(tb_wide,
+             aes(x = Untreated, y= CRISPRClean, colour=discard)) + 
+  geom_point(size=1, alpha=0.75) +
+  ylab("CRISPRclean") + 
+  xlab("Untreated") +
+  ggtitle("Genes detected") +
+  scale_colour_brewer(palette = "Set2") 
+
+plt2
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

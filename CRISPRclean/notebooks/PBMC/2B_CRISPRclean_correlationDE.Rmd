@@ -36,7 +36,7 @@ theme_set(theme_Publication())
 # Aim
 
 Evaluate jumpcode CRISPRclean single-cell boost kit. This adds more content on top of ribosomal and mitochondrial genes.  
-Including Pseudogenes and non variablee genes
+Including Pseudogenes and non variable genes
 
 ## This sample
 
@@ -55,7 +55,7 @@ Read in data
 
 ```{r loadData}
 sces <- readRDS(here::here(
-  "CRISPRclean/data/Jumpcode/SCEs", "PBMC_CRISPR_colData.sces.rds"
+  "data/genomics_data/SCEs/CRISPRclean/", "PBMC_CRISPR_colData.sces.rds"
 ))
 names(sces)
 
@@ -71,7 +71,7 @@ jpc <- read_csv(here::here(
 ))
 
 tb <- read_csv(here::here(
-  "CRISPRclean/data/Jumpcode/Matrices", "PBMC_CRISPR_colData.csv.gz"
+ "data/genomics_data/Matrices/CRISPRclean/", "PBMC_CRISPR_colData.csv.gz"
 ))
 tb$Workflow <- paste(tb$Protocol, tb$Sequencing, sep="_")
 
@@ -197,7 +197,7 @@ Sum of counts per gene. Very impressive correlation. More highly expressed genes
 
 ```{r gene_gene_sum}
 plt1 <- ggplot(gene_tb_wide, 
-             aes(x = Undepleted, y= CRISPRClean, colour = Category)) + 
+             aes(x = Undepleted, y= CRISPRClean, colour = Category, label=Symbol)) + 
   geom_point(alpha = 0.33, size=1) + 
   guides(colour = guide_legend(override.aes = list(size=3, alpha=1))) +
   xlab("Undepleted") + 
@@ -211,6 +211,50 @@ plt1 <- ggplot(gene_tb_wide,
   theme_Publication(base_size = 20)
 
 plt1
+```
+
+## Name the genes
+
+Needed to identify the off-target ribosomal genes.
+
+```{r gene_gene_names}
+plt2 <- ggplot(gene_tb_wide, 
+             aes(x = Undepleted, y= CRISPRClean, colour = Category, label=Symbol)) + 
+  geom_text(size=2.5, alpha=0.5) +
+  guides(colour = guide_legend(override.aes = list(size=3, alpha=1))) +
+  xlab("Undepleted") + 
+  ylab("CRISPRclean") +
+  ggtitle("") +
+  scale_x_continuous(trans='log10') +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "bl") +
+  scale_color_manual(values = c("orange", "blue", "red"), 
+                     labels = c('Non variable genes','Not in gRNA panel', "Ribosomal and\n mitochondrial")) +
+  theme_Publication(base_size = 20)
+
+plt2
+```
+
+## Colour the mito encode ribo genes too
+
+```{r gene_gene_sum2}
+gene_tb_wide$Category[grepl(pattern = "^MTRNR", x = gene_tb_wide$Symbol)] <- "Mitochondrially \nencoded rRNA"
+
+plt3 <- ggplot(gene_tb_wide, 
+             aes(x = Undepleted, y= CRISPRClean, colour = Category, label=Symbol)) + 
+  geom_point(alpha = 0.33, size=1) + 
+  guides(colour = guide_legend(override.aes = list(size=3, alpha=1))) +
+  xlab("Undepleted") + 
+  ylab("CRISPRclean") +
+  ggtitle("") +
+  scale_x_continuous(trans='log10') +
+  scale_y_continuous(trans='log10') +
+  annotation_logticks(base = 10, sides = "bl") +
+  scale_color_manual(values = c('darkgreen',"darkorange", "blue", "red"), 
+                     labels = c('Mitochondrially \nencoded rRNA','Non variable genes','Not in gRNA panel', "Ribosomal and\n mitochondrial")) +
+  theme_Publication(base_size = 20)
+
+plt3
 ```
 
 Compute person correlation
@@ -247,11 +291,11 @@ non_specific %>%
 
 ```{r saveSCEs}
 write_csv(gene_tb, here::here(
-  "CRISPRclean/data/Jumpcode/Matrices", "PBMC_gene_metrics.csv.gz"
+  "data/genomics_data/Matrices/CRISPRclean/", "PBMC_gene_metrics.csv.gz"
 ))
 
 write_csv(non_specific, here::here(
-  "CRISPRclean/data/Jumpcode/Matrices", "PBMC_nonSpecific_deplete.csv.gz"
+  "data/genomics_data/Matrices/CRISPRclean/", "PBMC_nonSpecific_deplete.csv.gz"
 ))
 ```
 

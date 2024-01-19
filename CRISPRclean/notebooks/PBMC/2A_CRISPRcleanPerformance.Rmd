@@ -55,13 +55,12 @@ Find the paths to the cell ranger output
 
 ```{r loadData}
 sces <- readRDS(here::here(
-  "CRISPRclean/data/Jumpcode/SCEs", "PBMC_CRISPR_colData.sces.rds"
+  "data/genomics_data/SCEs/CRISPRclean/", "PBMC_CRISPR_colData.sces.rds"
 ))
 
 tb <- read_csv(here::here(
-  "CRISPRclean/data/Jumpcode/Matrices", "PBMC_CRISPR_colData.csv.gz"
+  "data/genomics_data/Matrices/CRISPRclean/", "PBMC_CRISPR_colData.csv.gz"
 ))
-
 tb$Workflow <- paste(tb$Protocol, tb$Sequencing, sep="_")
 ```
 
@@ -246,7 +245,9 @@ p1 <- plotHighestExprs(sce_utd, n = 15) + ggtitle("Undepleted") +
 p2 <- plotHighestExprs(sce_jmp, n = 15) + ggtitle("CRISPRclean") +
   theme_Publication(base_size=16)
 
-p1 + p2 + plot_layout(guides = "collect")
+p1 + theme(axis.text.y=element_text(size=14)) +
+  p2 + theme(axis.text.y=element_text(size=14)) + 
+  plot_layout(guides = "collect")
 ```
 
 Small size

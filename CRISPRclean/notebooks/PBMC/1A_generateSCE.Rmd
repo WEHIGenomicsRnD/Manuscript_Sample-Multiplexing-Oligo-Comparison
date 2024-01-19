@@ -58,7 +58,9 @@ Find the paths to the cell ranger output
 head_path <- "/stornext/Projects/score/Analyses/R010_multiplexing/data/fastq/PBMC/jumpcode_PBMC_LMO_GEX/"
 tail_path <- "/outs/filtered_feature_bc_matrix/"
 
-UTD_DataPath <- paste("/stornext/Projects/score/GenomicsRnD/DB/S000331/cellranger_outs/", "PBMC_UTD-cr7", tail_path, sep="")
+UTD_DataPath <- paste("/stornext/Projects/GenomicsRnD/brown.d/S000331/cellranger_outs/", "PBMC_UTD-cr7", tail_path, sep="")
+
+
 JMP_full_DataPath <- paste(head_path, "PBMC_JMP-boost-ds", tail_path, sep="")
 JMP_half_DataPath <- paste(head_path, "PBMC_JMP-boost-dsHalf", tail_path, sep="")
 
@@ -66,7 +68,7 @@ JMP_half_DataPath <- paste(head_path, "PBMC_JMP-boost-dsHalf", tail_path, sep=""
 
 Load data using DropletUtils
 
-```{r loadData}
+```{r loadData, eval=FALSE}
 utdData <- read10xCounts(UTD_DataPath,version='3', col.names = T)
 jmpData_full = read10xCounts(JMP_full_DataPath,version='3', col.names = T)
 jmpData_half = read10xCounts(JMP_half_DataPath,version='3', col.names = T)
@@ -89,7 +91,7 @@ names(sces) <- c("Untreated", "Jumpcode_full", "Jumpcode_half")
 
 saveRDS(sces, "/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/CRISPRclean/PBMC_CRISPR_filtered_feature_matrix.sces.rds")
 
-# sces <- readRDS("/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/CRISPRclean/PBMC_CRISPR_filtered_feature_matrix.sces.rds")
+sces <- readRDS("/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/CRISPRclean/PBMC_CRISPR_filtered_feature_matrix.sces.rds")
 
 sces_orig <- sces
 ```
@@ -183,11 +185,11 @@ tb <- tb %>%
 
 ```{r}
 saveRDS(sces, here::here(
-  "CRISPRclean/data/Jumpcode/SCEs", "PBMC_CRISPR_colData.sces.rds"
+  "data/genomics_data/SCEs/CRISPRclean/", "PBMC_CRISPR_colData.sces.rds"
 ))
 
 write_csv(tb, here::here(
-  "CRISPRclean/data/Jumpcode/Matrices", "PBMC_CRISPR_colData.csv.gz"
+  "data/genomics_data/Matrices/CRISPRclean/", "PBMC_CRISPR_colData.csv.gz"
 ))
 ```
 

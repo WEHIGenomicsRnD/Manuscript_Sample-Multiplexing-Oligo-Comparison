@@ -65,7 +65,7 @@ Read in data. Was generated in 1C_Seurat_ref_map notebook.
 
 ```{r loadData}
 sce_list <- readRDS(here::here(
-  "CRISPRclean/data/Jumpcode/SCEs", "PBMC_CRISPR_annotated.sces.rds"
+  "data/genomics_data/SCEs/preprint_upload", "CRISPRclean_pbmc_SCE_annotated.rds"
 ))
 names(sce_list)
 
@@ -127,7 +127,7 @@ Low-abundance genes are problematic as zero or near-zero counts do not contain m
 
 Several metrics can be used to define low-abundance genes. The most obvious is the average count for each gene, computed across all cells in the data set. We typically observe a peak of moderately expressed genes following a plateau of lowly expressed genes.
 
-The distributions look the same between captures.
+The distributions look the same between samples including CRISPR cclean and its downsampled counterpart.
 
 ```{r average_count_p}
 ave_counts <- list()
@@ -186,8 +186,6 @@ gene_drop_tb
 
 Before normalisation and dimension reduction remove doublets. The doublets are called from the PBMC MULTI-Seq analysis. *PBMC/notebooks/_build_hashing_metadata.Rmd*
 
-# UP TO HERE
-
 ```{r}
 for (n in names(sce_list)) {
   current <- sce_list[[n]]
@@ -221,26 +219,66 @@ for (n in names(sce_list)) {
 
 ## Fit variance
 
-```{r var_genes_p, fig.cap="Highly variable genes. Top=CellPlex, Middle=MULTI-Seq, Bottom=Hashtag"}
+```{r var_genes_p}
 var_fit <- list()
 hvg <- list()
 
 for (n in names(sce_list)) {
   current <- sce_list[[n]]
   var_fit[[n]] <- modelGeneVarByPoisson(current)
-  hvg[[n]] <- getTopHVGs(var_fit[[n]], var.threshold = 0)
+  hvg[[n]] <- getTopHVGs(var_fit[[n]], var.threshold = 0, fdr.threshold = 0.05)
 }
+```
+
+## Look at mean variance relationship
+
+No clear difference
+
+```{r mean_variance}
+par(mfrow=c(1,3))
+
+# Visualizing the fit:
+fit.pbmc <- metadata(var_fit[[1]])
+plot(fit.pbmc$mean, fit.pbmc$var, xlab="Mean of log-expression",
+    ylab="Variance of log-expression", main="Untreated")
+curve(fit.pbmc$trend(x), col="dodgerblue", add=TRUE, lwd=2)
+
+# Visualizing the fit:
+fit.pbmc <- metadata(var_fit[[2]])
+plot(fit.pbmc$mean, fit.pbmc$var, xlab="Mean of log-expression",
+    ylab="Variance of log-expression", main="Jumpcode")
+curve(fit.pbmc$trend(x), col="darkgreen", add=TRUE, lwd=2)
+
+# Visualizing the fit:
+fit.pbmc <- metadata(var_fit[[3]])
+plot(fit.pbmc$mean, fit.pbmc$var, xlab="Mean of log-expression",
+    ylab="Variance of log-expression", main="Jumpcode\n downsampled")
+curve(fit.pbmc$trend(x), col="purple", add=TRUE, lwd=2)
+```
+
+List how many variable genes there are.  
+The number scales with how many genes are retained in the analysis due to expression cut-offs.
+
+```{r}
+var_length <- c(
+  length(hvg[[1]]),
+  length(hvg[[2]]),
+  length(hvg[[3]])
+)
+names(var_length) <- names(sce_list)
+
+var_length
 ```
 
 Visualize variable genes
 
-```{r}
+```{r variable_genes}
 p1 <- plotExpression(object = sce_list[[1]], features = hvg[[1]][1:10])
 p2 <- plotExpression(object = sce_list[[2]], features = hvg[[2]][1:10])
 p3 <- plotExpression(object = sce_list[[3]], features = hvg[[3]][1:10])
 
 p1 + p2 + p3 + 
-  plot_layout(guides = "collect", ncol = 2)
+  plot_layout(guides = "collect", ncol = 3)
 ```
 
 # Dimension reduction {.tabset}

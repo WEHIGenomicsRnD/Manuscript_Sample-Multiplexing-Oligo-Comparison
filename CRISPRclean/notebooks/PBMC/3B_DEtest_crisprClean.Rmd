@@ -25,13 +25,13 @@ knitr::opts_chunk$set(echo = TRUE,
                       fig.path='./figures/DEtest_crisprclean/',
                       warning=FALSE, message=FALSE)
 knitr::opts_knit$set(root.dir = here::here())
+library(ggrepel)
 library(scater)
 library(scran)
 library(edgeR)
 library(patchwork)
 library(knitr)
 library(tidyverse)
-library(plotly)
 source(here::here("scripts/R/theme_publication.R"))
 theme_set(theme_Publication())
 ```
@@ -59,9 +59,7 @@ I mapped both the undepleted and CRISPRclean depleted datasets to GRCh38 referen
 Read in data
 
 ```{r loadData}
-sces <- readRDS(here::here(
-  "CRISPRclean/data/Jumpcode/SCEs", "PBMC_CRISPR_colData.sces.rds"
-))
+sces <- readRDS("/stornext/Projects/score/Analyses/R010_multiplexing/SCEs/CRISPRclean/PBMC_CRISPR_colData.sces.rds")
 names(sces)
 
 sce_jmp <- sces[["Jumpcode_full"]]
@@ -91,7 +89,7 @@ Here I will follow the example of *Chapter 4 DE analyses between conditions
 Keep only the singlets assigned to donors for simplicity
 
 ```{r}
-keep_cells <- c("VBDR1186", "VBDR1206", "VBDR1216", "VBDR1233")
+keep_cells <- c("donor0", "donor1", "donor2", "donor3")
 sce_singlet <- sce[,sce$mul_Donor %in% keep_cells]
 
 table(sce_singlet$Protocol, sce_singlet$mul_Donor)
@@ -189,32 +187,32 @@ topTags <- topTags(res, n=20000)
 head(topTags, 20)
 ```
 
-```{r volcano}
+```{r}
 tb <- as_tibble(topTags)[[1]]
 tb$In_Panel <- row.names(tb) %in% jpc$GeneID
 
 # add a column of NAs
-tb$DElabel <- FALSE
+tb$DElabel <- ""
 # if log2Foldchange > 1 or < -1 and pvalue < 0.05, set as "UP"
-tb$DElabel[tb$logFC > 2 & tb$FDR < 0.05] <- "DE"
-tb$DElabel[tb$logFC < -2 & tb$FDR < 0.05] <- "DE"
+tb$DElabel[tb$logFC > 2 & tb$FDR < 0.01] <- "DE"
+tb$DElabel[tb$logFC < -2 & tb$FDR < 0.01] <- "DE"
 tb$DElabel[tb$DElabel == "DE"] <- row.names(tb)[tb$DElabel == "DE"]
-tb$DElabel[tb$DElabel == FALSE] <- NA
+tb$DElabel[tb$In_Panel == TRUE] <- ""
 
-plt1 <- ggplot(data=tb, aes(x=logFC, y=-log10(FDR), colour=In_Panel, label=row.names(tb))) + 
+```
+
+Plot the volcano
+
+```{r volcano}
+plt1 <- ggplot(data=tb, aes(x=logFC, y=-log10(FDR), colour=In_Panel, label=DElabel)) + 
   geom_point(alpha=0.33, size=1.5) +
-  geom_text(size=1, alpha=0) +
+  geom_text_repel(size=3.5, alpha=1, colour="darkblue") +
   guides(colour = guide_legend(override.aes = list(size=3, alpha=1))) +
   scale_color_manual(values = c("blue", "red")) +
+  geom_vline(xintercept = 1, linetype="dotted") + geom_vline(xintercept = -1, linetype="dotted") +
   theme_Publication()
 
 plt1
-```
-
-View interactive version
-
-```{r volcanoplotly}
-ggplotly(plt1)
 ```
 
 Plot MA plot
@@ -230,12 +228,6 @@ plt2 <- ggplot(data=tb, aes(x=logCPM, y=logFC, colour=In_Panel, label=row.names(
   theme_Publication()
 
 plt2
-```
-
-View interactive version
-
-```{r MAoplotly}
-ggplotly(plt2)
 ```
 
 # Extract DE genes for further investigation
@@ -254,7 +246,7 @@ write output to file
 
 ```{r}
 write_csv(tb, here::here(
-  "CRISPRclean/data/Jumpcode/Matrices", "PBMC_DEgenes.csv.gz"
+  "CRISPRclean/data/PBMC/Matrices", "PBMC_DEgenes.csv.gz"
 ))
 ```
 
