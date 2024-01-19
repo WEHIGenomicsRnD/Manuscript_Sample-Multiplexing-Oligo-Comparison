@@ -28,6 +28,7 @@ library(here)
 knitr::opts_knit$set(root.dir = here::here())
 library(tidyverse)
 library(knitr)
+library(FSA)
 source(here::here("scripts/R/theme_publication.R"))
 theme_set(theme_Publication())
 ```
@@ -121,12 +122,12 @@ write_csv(tb, here::here(
 ))
 ```
 
-```{r}
 # Restart from saved matrix
+
+```{r}
 tb <- read_csv(here::here(
   "PBMC/data/Matrices", "oligo_tag_summary.csv"))
 ```
-
 
 The category No tag assigned includes both cells that were considered Blanks and cells considered Unassigned
 
@@ -345,6 +346,33 @@ plt4 <- ggplot(data=tb) +
   theme_Publication(base_size=20)
 
 plt4
+```
+
+## Conduct a statistical test comparing the ratios
+
+Data is not normally distributed
+
+```{r}
+# Basic Q-Q plot
+qqnorm(tb$`Metric Value`)
+qqline(tb$`Metric Value`, col = "red")  # Adds a reference line in red
+```
+
+Performing the Kruskal-Wallis test
+
+```{r}
+kruskal_result <- kruskal.test(`Metric Value` ~ Protocol, tb)
+
+# View the results
+print(kruskal_result)
+
+```
+
+After finding a significant result in the Kruskal-Wallis test with three groups, you'll want to perform post-hoc pairwise comparisons to determine which specific groups differ from each other. The Dunn test is commonly used for this purpose. In R, you can use the dunn.test package to perform Dunn's test.
+
+```{r}
+dunnTest(`Metric Value` ~ Protocol, tb,
+         method="bonferroni")
 ```
 
 # Conclusion 

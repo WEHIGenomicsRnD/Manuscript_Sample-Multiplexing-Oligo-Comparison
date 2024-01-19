@@ -26,6 +26,7 @@ knitr::opts_chunk$set(echo = TRUE,
 knitr::opts_knit$set(root.dir = here::here())
 library(Matrix)
 library(tidyverse)
+library(FSA)
 library(ggridges)
 library(DropletUtils)
 library(patchwork)
@@ -146,6 +147,15 @@ saveRDS(tb, here::here(
 ))
 ```
 
+Restart from saved matrix
+
+```{r}
+tb <- readRDS(here::here(
+  "Mouse_E18_Brain/data/Matrices/signal_noise_counts.tb.rds"
+))
+```
+
+
 # GGridges {.tabset}
 
 The plot I liked most is [https://cran.r-project.org/web/packages/ggridges/vignettes/introduction.html](GGridges)
@@ -218,7 +228,7 @@ plt_cmo / plt_lmo / plt_Nxt
 # Plot signal to noise for each protocol
 
 ```{r}
-head_path <- "/stornext/Projects/score/GenomicsRnD/DB_NN258/multi_out/"
+head_path <- "/stornext/Projects/GenomicsRnD/brown.d/DB_NN258/multi_out/"
 tail_path <- "/outs/per_sample_outs/Lox-brain-1/metrics_summary.csv"
 
 CMO_file_path <- paste(head_path, "R010_CMO_ME", tail_path, sep="")
@@ -265,6 +275,10 @@ tb$CellRangerCall <- recode(tb$CellRangerCall,
 
 tb$Protocol <- recode(tb$Protocol,
                       "Custom MULTI-Seq CMO"="Custom\nMULTI-Seq CMO")
+
+write_csv(tb, here::here(
+  "Mouse_E18_Brain/data/Matrices/signal_noise.csv"
+))
 ```
 
 ## Make the plot
@@ -282,6 +296,33 @@ plt4 <- ggplot(data=tb) +
   theme_Publication(base_size=16)
 
 plt4
+```
+
+## Conduct a statistical test comparing the ratios
+
+Data is not normally distributed
+
+```{r}
+# Basic Q-Q plot
+qqnorm(tb$`Metric Value`)
+qqline(tb$`Metric Value`, col = "red")  # Adds a reference line in red
+```
+
+Performing the Kruskal-Wallis test
+
+```{r}
+kruskal_result <- kruskal.test(`Metric Value` ~ Protocol, tb)
+
+# View the results
+print(kruskal_result)
+
+```
+
+After finding a significant result in the Kruskal-Wallis test with three groups, you'll want to perform post-hoc pairwise comparisons to determine which specific groups differ from each other. The Dunn test is commonly used for this purpose. In R, you can use the dunn.test package to perform Dunn's test.
+
+```{r}
+dunnTest(`Metric Value` ~ Protocol, tb,
+         method="bonferroni")
 ```
 
 

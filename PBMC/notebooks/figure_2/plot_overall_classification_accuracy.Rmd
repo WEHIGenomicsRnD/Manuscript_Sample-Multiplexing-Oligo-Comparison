@@ -190,6 +190,19 @@ ggplot(per_method_tbl,
   facet_grid(~Protocol)
 ```
 
+Perform a statistical test comparing proportions
+
+```{r}
+# Create a contingency table
+cont_tb <- per_method_tbl %>% 
+  filter(Donor != "blank") %>% 
+  select(Protocol,Donor:n) %>% 
+  pivot_wider(names_from = Method, values_from = n)
+
+t_test_result <- t.test(x=cont_tb$SNP, y = cont_tb$`Cell Ranger`, paired = TRUE)
+```
+
+Not significant.
 
 ## As stacked barchart
 
@@ -500,6 +513,7 @@ misclass_sing$Algorithm <- recode(misclass_sing$Algorithm,
                                 )
 ```
 
+Generate the plot
 
 ```{r percent_agree_donor}
 p4 <- ggplot(misclass_sing, 
@@ -509,11 +523,22 @@ p4 <- ggplot(misclass_sing,
   xlab("") + 
   scale_color_brewer(palette = "Dark2", name = "Protocol") +
   scale_shape(name="Protocol") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  theme_Publication()
 
 p4
 ```
 
+## Statistical test the number of missclassified singlets
+
+Performing the Kruskal-Wallis test. Not significant.
+
+```{r}
+kruskal_result <- kruskal.test(n ~ Algorithm, misclass_sing)
+
+# View the results
+print(kruskal_result)
+```
 
 # Agreement of singlet, multiplet unassigned calls
 
