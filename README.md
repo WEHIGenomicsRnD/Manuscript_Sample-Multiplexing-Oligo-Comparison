@@ -9,7 +9,7 @@ We also compared the performance of fixed scRNA-Seq kits and highlight the advan
 
 ## Preprint
 
-Manuscript is available at biorxiv https://doi.org/10.1101/2023.06.20.544880
+The publication is available open access at https://doi.org/10.1016/j.ygeno.2024.110793
 
 ## Data availability
 
