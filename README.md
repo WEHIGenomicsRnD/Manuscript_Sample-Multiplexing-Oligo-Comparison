@@ -15,7 +15,7 @@ The publication is available open access at https://doi.org/10.1016/j.ygeno.2024
 
 The count matrices and metadata are available as SingleCellExperiment objects at DOI: 10.5281/zenodo.8031078 https://zenodo.org/record/8031079
 
-scRNA-Seq fastq data for PBMCs and mouse embryonic brain is freely available at NCBI Bioproject PRRJNA1064628 and PRJNA106402 respectively.
+scRNA-Seq fastq data for PBMCs and mouse embryonic brain is freely available at NCBI Bioproject PRJNA1064602 and PRJNA1064628 respectively.
 
 snRNA-seq fastq data for Ovarian Carcinosarcome PDX nuclei is available through the European Genome-phenome Archive (EGAS50000000153). The use of this sequencing data is subject to a data transfer agreement and is restricted to ethically approved cancer research and cannot be used to assess germline variants.
 
